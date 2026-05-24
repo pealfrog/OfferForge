@@ -1,44 +1,49 @@
 const root = document.documentElement;
 const themeToggle = document.querySelector("#themeToggle");
 const themeIcon = document.querySelector("#themeIcon");
-const statusPanel = document.querySelector(".status-panel");
-const statusButton = document.querySelector("#statusButton");
-const statusTitle = document.querySelector("#statusTitle");
-const statusText = document.querySelector("#statusText");
-const countValue = document.querySelector("#countValue");
-const countBadge = document.querySelector("#countBadge");
-const plusButton = document.querySelector("#plusButton");
-const minusButton = document.querySelector("#minusButton");
-const resetButton = document.querySelector("#resetButton");
-const todoForm = document.querySelector("#todoForm");
-const todoInput = document.querySelector("#todoInput");
-const todoList = document.querySelector("#todoList");
-const todoCount = document.querySelector("#todoCount");
+const clearButton = document.querySelector("#clearButton");
+const scenarioSelect = document.querySelector("#scenarioSelect");
+const roleInput = document.querySelector("#roleInput");
+const profileInput = document.querySelector("#profileInput");
+const connectionStatus = document.querySelector("#connectionStatus");
+const messagesEl = document.querySelector("#messages");
+const chatForm = document.querySelector("#chatForm");
+const messageInput = document.querySelector("#messageInput");
+const sendButton = document.querySelector("#sendButton");
 
-const storageKey = "starter-web-ui";
-const defaultState = {
-  dark: false,
-  paused: false,
-  count: 0,
-  todos: [
-    { id: crypto.randomUUID(), text: "确认页面可访问", done: true },
-    { id: crypto.randomUUID(), text: "修改文案并刷新页面", done: false },
-  ],
+const storageKey = "offerforge-chat-state";
+const welcomeMessage = {
+  role: "assistant",
+  content:
+    "你好，我是 OfferForge 的模拟面试官。你可以先告诉我目标岗位、保研方向或简历亮点；也可以直接说“开始面试”。",
 };
 
 let state = loadState();
+let isSending = false;
 
 function loadState() {
   const saved = localStorage.getItem(storageKey);
+  const baseState = {
+    dark: false,
+    scenario: "保研面试",
+    role: "计算机专业大三学生",
+    profile: "",
+    messages: [welcomeMessage],
+  };
 
   if (!saved) {
-    return defaultState;
+    return baseState;
   }
 
   try {
-    return { ...defaultState, ...JSON.parse(saved) };
+    const parsed = JSON.parse(saved);
+    return {
+      ...baseState,
+      ...parsed,
+      messages: Array.isArray(parsed.messages) && parsed.messages.length ? parsed.messages : [welcomeMessage],
+    };
   } catch {
-    return defaultState;
+    return baseState;
   }
 }
 
@@ -49,49 +54,74 @@ function saveState() {
 function render() {
   root.classList.toggle("dark", state.dark);
   themeIcon.textContent = state.dark ? "☼" : "☾";
-
-  statusPanel.classList.toggle("paused", state.paused);
-  statusTitle.textContent = state.paused ? "状态已暂停" : "网站已启动";
-  statusText.textContent = state.paused ? "交互状态已切换，服务仍在运行。" : "监听外部网络地址，前端交互可用。";
-
-  countValue.textContent = state.count;
-  countBadge.textContent = state.count;
-
-  todoList.replaceChildren(...state.todos.map(createTodoItem));
-  todoCount.textContent = `${state.todos.length} 项`;
-
+  scenarioSelect.value = state.scenario;
+  roleInput.value = state.role;
+  profileInput.value = state.profile;
+  messagesEl.replaceChildren(...state.messages.map(createMessage));
+  messagesEl.scrollTop = messagesEl.scrollHeight;
   saveState();
 }
 
-function createTodoItem(todo) {
-  const item = document.createElement("li");
-  item.className = `todo-item${todo.done ? " done" : ""}`;
+function createMessage(message) {
+  const item = document.createElement("article");
+  item.className = `message ${message.role === "user" ? "user" : "assistant"}`;
 
-  const label = document.createElement("label");
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = todo.done;
-  checkbox.addEventListener("change", () => {
-    state.todos = state.todos.map((entry) => (entry.id === todo.id ? { ...entry, done: checkbox.checked } : entry));
-    render();
-  });
+  const label = document.createElement("span");
+  label.className = "message-label";
+  label.textContent = message.role === "user" ? "你" : "AI 面试官";
 
-  const text = document.createElement("span");
-  text.textContent = todo.text;
-  label.append(checkbox, text);
+  const content = document.createElement("p");
+  content.textContent = message.content;
 
-  const removeButton = document.createElement("button");
-  removeButton.className = "remove-button";
-  removeButton.type = "button";
-  removeButton.textContent = "×";
-  removeButton.setAttribute("aria-label", `删除 ${todo.text}`);
-  removeButton.addEventListener("click", () => {
-    state.todos = state.todos.filter((entry) => entry.id !== todo.id);
-    render();
-  });
-
-  item.append(label, removeButton);
+  item.append(label, content);
   return item;
+}
+
+function setSending(nextValue) {
+  isSending = nextValue;
+  sendButton.disabled = nextValue;
+  messageInput.disabled = nextValue;
+  connectionStatus.textContent = nextValue ? "AI 正在生成回复..." : "已连接本地代理，可以继续对话。";
+}
+
+function buildPayload() {
+  return {
+    scenario: state.scenario,
+    role: state.role,
+    profile: state.profile,
+    messages: state.messages.filter((message) => ["user", "assistant"].includes(message.role)).slice(-12),
+  };
+}
+
+async function sendMessage(text) {
+  state.messages.push({ role: "user", content: text });
+  render();
+  setSending(true);
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildPayload()),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "模型服务暂时不可用。");
+    }
+
+    state.messages.push({ role: "assistant", content: data.reply || "我没有收到有效回复，请再试一次。" });
+  } catch (error) {
+    state.messages.push({
+      role: "assistant",
+      content: `请求失败：${error.message}`,
+    });
+  } finally {
+    setSending(false);
+    render();
+    messageInput.focus();
+  }
 }
 
 themeToggle.addEventListener("click", () => {
@@ -99,37 +129,48 @@ themeToggle.addEventListener("click", () => {
   render();
 });
 
-statusButton.addEventListener("click", () => {
-  state.paused = !state.paused;
+clearButton.addEventListener("click", () => {
+  state.messages = [welcomeMessage];
   render();
 });
 
-plusButton.addEventListener("click", () => {
-  state.count += 1;
+scenarioSelect.addEventListener("change", () => {
+  state.scenario = scenarioSelect.value;
   render();
 });
 
-minusButton.addEventListener("click", () => {
-  state.count -= 1;
-  render();
+roleInput.addEventListener("input", () => {
+  state.role = roleInput.value.trim() || "计算机专业大三学生";
+  saveState();
 });
 
-resetButton.addEventListener("click", () => {
-  state.count = 0;
-  render();
+profileInput.addEventListener("input", () => {
+  state.profile = profileInput.value.trim();
+  saveState();
 });
 
-todoForm.addEventListener("submit", (event) => {
+messageInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
+
+chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const text = todoInput.value.trim();
+
+  if (isSending) {
+    return;
+  }
+
+  const text = messageInput.value.trim();
 
   if (!text) {
     return;
   }
 
-  state.todos = [{ id: crypto.randomUUID(), text, done: false }, ...state.todos];
-  todoInput.value = "";
-  render();
+  messageInput.value = "";
+  sendMessage(text);
 });
 
 render();

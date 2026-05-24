@@ -1,6 +1,6 @@
 # Starter Web UI
 
-一个零依赖静态网站示例，包含基础 HTML、CSS 和 JavaScript 交互。
+一个面向大三学生面试训练的 AI 对话原型，包含基础聊天 UI 和千问 API 服务端代理。
 
 ## 项目目录
 
@@ -14,6 +14,7 @@
 
 ```bash
 systemctl status nginx
+systemctl status offerforge-api
 ```
 
 网站文件已发布到：
@@ -26,6 +27,12 @@ Nginx 监听标准 HTTP 端口：
 
 ```text
 0.0.0.0:80
+```
+
+千问代理服务只监听本机端口：
+
+```text
+127.0.0.1:3001
 ```
 
 访问：
@@ -45,3 +52,20 @@ http://服务器公网IP/
 ```
 
 脚本会把核心目录里的静态文件同步到 Nginx 对外目录，并重载 Nginx。
+
+## API 代理
+
+浏览器请求：
+
+```text
+POST /api/chat
+```
+
+Nginx 会把请求转发到本机 Node 服务，Node 服务从 `QianWen-API` 文件读取 API key，再调用千问 OpenAI 兼容接口。API key 不会出现在前端代码里。
+
+常用命令：
+
+```bash
+systemctl restart offerforge-api
+journalctl -u offerforge-api -n 80 --no-pager
+```

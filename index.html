@@ -3,58 +3,75 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Starter Web UI</title>
+    <title>OfferForge</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="app-shell">
-      <section class="workspace" aria-label="Starter dashboard">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Server is live</p>
-            <h1>Starter Web UI</h1>
-          </div>
-          <button class="icon-button" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
-            <span id="themeIcon">☾</span>
-          </button>
-        </header>
+      <section class="workspace" aria-label="OfferForge interview practice">
+        <aside class="side-panel" aria-label="训练设置">
+          <header>
+            <p class="eyebrow">OfferForge</p>
+            <h1>AI 面试训练</h1>
+            <p class="intro">选择训练方向，和模拟面试官进行一轮基础对话。</p>
+          </header>
 
-        <section class="status-panel">
-          <div class="status-copy">
-            <span class="status-dot" aria-hidden="true"></span>
+          <div class="control-group">
+            <label for="scenarioSelect">面试场景</label>
+            <select id="scenarioSelect">
+              <option value="保研面试">保研面试</option>
+              <option value="就业面试">就业面试</option>
+              <option value="项目经历追问">项目经历追问</option>
+              <option value="通用压力面试">通用压力面试</option>
+            </select>
+          </div>
+
+          <div class="control-group">
+            <label for="roleInput">目标方向</label>
+            <input id="roleInput" type="text" value="计算机专业大三学生" autocomplete="off" />
+          </div>
+
+          <div class="control-group">
+            <label for="profileInput">个人背景</label>
+            <textarea id="profileInput" rows="5" placeholder="例如：熟悉 Java，做过推荐系统项目，准备保研夏令营。"></textarea>
+          </div>
+
+          <div class="hint-list" aria-label="训练要点">
             <div>
-              <h2 id="statusTitle">网站已启动</h2>
-              <p id="statusText">监听外部网络地址，前端交互可用。</p>
+              <strong>当前能力</strong>
+              <span>基础多轮交流</span>
+            </div>
+            <div>
+              <strong>回答风格</strong>
+              <span>面试官追问 + 简短反馈</span>
             </div>
           </div>
-          <button class="primary-button" id="statusButton" type="button">切换状态</button>
-        </section>
 
-        <section class="grid">
-          <article class="panel counter-panel">
-            <div class="panel-heading">
-              <h2>计数器</h2>
-              <span id="countBadge">0</span>
-            </div>
-            <div class="counter-value" id="countValue">0</div>
-            <div class="button-row">
-              <button class="secondary-button" id="minusButton" type="button">-1</button>
-              <button class="secondary-button" id="plusButton" type="button">+1</button>
-              <button class="ghost-button" id="resetButton" type="button">重置</button>
-            </div>
-          </article>
+          <button class="ghost-button" id="clearButton" type="button">清空对话</button>
+        </aside>
 
-          <article class="panel">
-            <div class="panel-heading">
-              <h2>待办</h2>
-              <span id="todoCount">2 项</span>
+        <section class="chat-panel" aria-label="AI 对话区">
+          <header class="chat-header">
+            <div>
+              <h2>模拟面试官</h2>
+              <p id="connectionStatus">已连接本地代理，等待开始。</p>
             </div>
-            <form class="todo-form" id="todoForm">
-              <input id="todoInput" name="todo" type="text" placeholder="新增事项" autocomplete="off" />
-              <button class="primary-button compact" type="submit">添加</button>
-            </form>
-            <ul class="todo-list" id="todoList"></ul>
-          </article>
+            <button class="icon-button" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
+              <span id="themeIcon">☾</span>
+            </button>
+          </header>
+
+          <div class="messages" id="messages" aria-live="polite"></div>
+
+          <form class="composer" id="chatForm">
+            <textarea
+              id="messageInput"
+              rows="3"
+              placeholder="输入你的回答或请求，例如：请先问我一个关于项目经历的问题。"
+              autocomplete="off"
+            ></textarea>
+            <button class="primary-button" id="sendButton" type="submit">发送</button>
+          </form>
         </section>
       </section>
     </main>
