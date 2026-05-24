@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 const port = Number(process.env.PORT || 3001);
 const apiKeyPath = process.env.QIANWEN_API_KEY_FILE || join(process.cwd(), "QianWen-API");
+const basicQuestionPath = process.env.BASIC_QUESTION_FILE || join(process.cwd(), "basic_question");
 const model = process.env.QIANWEN_MODEL || "qwen-plus";
 
 const jsonHeaders = {
@@ -35,11 +36,30 @@ async function loadCredentials() {
   return { apiKey, endpoint };
 }
 
-function buildSystemPrompt({ trainingMode, context, resume }) {
+async function loadBasicQuestions() {
+  const raw = await readFile(basicQuestionPath, "utf8");
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function pickRandom(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function buildSystemPrompt({ trainingMode, context, resume, followup }) {
+  const followupCount = Number(followup?.count || 0);
+  const maxFollowups = Number(followup?.maxCount || 4);
+  const canFollowUp = followupCount < maxFollowups;
   const prompt = [
     "你是 OfferForge 的 AI 模拟面试官，目标用户是大三本科生，方向偏计算机/AI。",
     `训练模式：${trainingMode === "resume" ? "针对简历提问追问" : trainingMode === "project" ? "针对应聘项目个性化训练" : "通用类问题问答"}`,
     `基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
+    `当前连续追问次数：${followupCount}，追问上限：${maxFollowups}。`,
+    canFollowUp
+      ? "你需要判断：用户刚才的回答是否值得继续追问。如果值得，使用 follow_up；如果已经充分、偏离主题或需要覆盖新能力点，使用 new_question。"
+      : "已经达到连续追问上限，本轮必须使用 new_question，另起一个新的问题方向。",
   ];
 
   if (trainingMode === "resume") {
@@ -53,8 +73,11 @@ function buildSystemPrompt({ trainingMode, context, resume }) {
   }
 
   prompt.push(
-    "请用中文交流。每轮回复保持精炼，优先提出一个具体追问；必要时给出一句可执行的改进建议。",
-    "不要一次性给出长篇题库。保持真实面试官风格，围绕用户回答继续追问。",
+    "follow_up 的含义：围绕上一问题和用户刚才回答继续深挖，要求更具体的依据、细节、取舍、反思或量化结果。",
+    "new_question 的含义：结束当前问题链，提出一个新的面试问题，可以覆盖新的能力点、简历点或项目维度。",
+    "请用中文交流。每轮回复保持精炼，只提出一个问题；必要时附带一句很短的反馈。",
+    "不要一次性给出长篇题库。",
+    '你必须只输出 JSON，格式为：{"mode":"follow_up 或 new_question","reply":"要展示给用户的问题文本"}。不要输出 Markdown，不要输出额外解释。',
   );
 
   return prompt.join("\n");
@@ -110,12 +133,99 @@ async function handleChat(request, response) {
       return;
     }
 
-    const reply = await callQianwen([{ role: "system", content: buildSystemPrompt(body) }, ...messages]);
+    const previousCount = Math.max(0, Number(body.followup?.count || 0));
+    const maxCount = Math.max(1, Number(body.followup?.maxCount || 4));
+    const forcedNewQuestion = previousCount >= maxCount;
+
+    if (body.trainingMode === "general" && shouldUseBasicQuestion(body, messages, previousCount, forcedNewQuestion)) {
+      const questions = await loadBasicQuestions();
+      const reply = pickRandom(questions) || "请简单做一个自我介绍。";
+
+      response.writeHead(200, jsonHeaders);
+      response.end(JSON.stringify({ reply, followup: { mode: "new_question", count: 0, maxCount } }));
+      return;
+    }
+
+    const rawReply = await callQianwen([{ role: "system", content: buildSystemPrompt(body) }, ...messages], {
+      temperature: 0.45,
+    });
+    const parsedReply = parseInterviewReply(rawReply);
+    let mode = !forcedNewQuestion && parsedReply.mode === "follow_up" ? "follow_up" : "new_question";
+    let reply = parsedReply.reply || rawReply || "模型没有返回文本内容。";
+
+    if (body.trainingMode === "general" && mode === "new_question") {
+      const questions = await loadBasicQuestions();
+      reply = pickRandom(questions) || reply;
+    }
+
+    const nextCount = mode === "follow_up" ? previousCount + 1 : 0;
+
     response.writeHead(200, jsonHeaders);
-    response.end(JSON.stringify({ reply: reply || "模型没有返回文本内容。" }));
+    response.end(
+      JSON.stringify({
+        reply,
+        followup: { mode, count: nextCount, maxCount },
+      }),
+    );
   } catch (error) {
     response.writeHead(error.status || 500, jsonHeaders);
     response.end(JSON.stringify({ error: error.message || "服务器内部错误。" }));
+  }
+}
+
+function shouldUseBasicQuestion(body, messages, previousCount, forcedNewQuestion) {
+  if (forcedNewQuestion) {
+    return true;
+  }
+
+  if (previousCount > 0) {
+    return false;
+  }
+
+  const userMessages = messages.filter((message) => message.role === "user");
+  const assistantMessages = messages.filter((message) => message.role === "assistant");
+  const lastUserText = userMessages.at(-1)?.content || "";
+  const isStartRequest = /开始|出题|提问|新问题|下一个|来一题|面试/.test(lastUserText);
+
+  return assistantMessages.length <= 1 || isStartRequest;
+}
+
+async function handleOpeningQuestion(request, response) {
+  try {
+    const body = await readJson(request);
+    const trainingMode = body.trainingMode || "general";
+    const questions = await loadBasicQuestions();
+    let reply = "";
+
+    if (trainingMode === "general") {
+      reply = pickRandom(questions) || "请简单做一个自我介绍。";
+    } else if (trainingMode === "resume") {
+      reply = "请先上传简历，我会直接从简历内容开始追问。";
+    } else if (trainingMode === "project") {
+      reply = "请先介绍一个你最想被追问的项目：项目目标、你的角色、技术栈和结果。";
+    } else {
+      reply = pickRandom(questions) || "请简单做一个自我介绍。";
+    }
+
+    response.writeHead(200, jsonHeaders);
+    response.end(JSON.stringify({ reply, followup: { mode: "new_question", count: 0, maxCount: 4 } }));
+  } catch (error) {
+    response.writeHead(error.status || 500, jsonHeaders);
+    response.end(JSON.stringify({ error: error.message || "开场问题生成失败。" }));
+  }
+}
+
+function parseInterviewReply(rawReply) {
+  const fallback = { mode: "new_question", reply: rawReply };
+
+  try {
+    const jsonText = rawReply.match(/\{[\s\S]*\}/)?.[0] || rawReply;
+    const parsed = JSON.parse(jsonText);
+    const mode = parsed.mode === "follow_up" ? "follow_up" : "new_question";
+    const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
+    return { mode, reply };
+  } catch {
+    return fallback;
   }
 }
 
@@ -174,6 +284,11 @@ const server = createServer((request, response) => {
 
   if (request.method === "POST" && request.url === "/api/format-resume") {
     handleFormatResume(request, response);
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/opening-question") {
+    handleOpeningQuestion(request, response);
     return;
   }
 

@@ -17,6 +17,10 @@ const resumePanel = document.querySelector("#resumePanel");
 const resumeHint = document.querySelector("#resumeHint");
 const resumeViewer = document.querySelector("#resumeViewer");
 const clearHighlightButton = document.querySelector("#clearHighlightButton");
+const followupState = document.querySelector("#followupState");
+const followupLabel = document.querySelector("#followupLabel");
+const followupCount = document.querySelector("#followupCount");
+const stopFollowupButton = document.querySelector("#stopFollowupButton");
 const connectionStatus = document.querySelector("#connectionStatus");
 const timerPanel = document.querySelector("#timerPanel");
 const timerPhase = document.querySelector("#timerPhase");
@@ -29,11 +33,6 @@ const messageInput = document.querySelector("#messageInput");
 const sendButton = document.querySelector("#sendButton");
 
 const storageKey = "offerforge-chat-state";
-const welcomeMessage = {
-  role: "assistant",
-  content:
-    "你好，我是 OfferForge 的模拟面试官。你可以先告诉我目标岗位、保研方向或简历亮点；也可以直接说“开始面试”。",
-};
 
 let state = loadState();
 let isSending = false;
@@ -52,11 +51,13 @@ function loadState() {
     trainingMode: "general",
     prepSeconds: 5,
     timerVisible: true,
+    followupCount: 0,
+    followupMode: "new_question",
     resumeName: "",
     resumeText: "",
     resumeSections: [],
     activeResumeSection: null,
-    messages: [welcomeMessage],
+    messages: [],
   };
 
   if (!saved) {
@@ -68,7 +69,7 @@ function loadState() {
     return {
       ...baseState,
       ...parsed,
-      messages: Array.isArray(parsed.messages) && parsed.messages.length ? parsed.messages : [welcomeMessage],
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
     };
   } catch {
     return baseState;
@@ -90,6 +91,7 @@ function render() {
   clearResumeButton.hidden = !state.resumeName;
   timerPanel.hidden = !state.timerVisible;
   showTimerButton.hidden = state.timerVisible;
+  renderFollowupState();
   messagesEl.replaceChildren(...state.messages.map(createMessage));
   messagesEl.scrollTop = messagesEl.scrollHeight;
   renderResume();
@@ -168,6 +170,13 @@ function createMessage(message) {
 
   item.append(label, content);
   return item;
+}
+
+function renderFollowupState() {
+  const active = state.followupMode === "follow_up";
+  followupState.dataset.active = String(active);
+  followupLabel.textContent = active ? "追问中" : "题库首问";
+  followupCount.textContent = `${Math.min(state.followupCount, 4)} / 4`;
 }
 
 function setSending(nextValue) {
@@ -274,6 +283,11 @@ function buildPayload() {
       state.trainingMode === "project"
         ? "大三本科生，计算机/AI 方向，正在准备应聘项目训练。"
         : "大三本科生，计算机/AI 方向。",
+    followup: {
+      mode: state.followupMode,
+      count: state.followupCount,
+      maxCount: 4,
+    },
     resume: {
       name: state.resumeName,
       text: state.resumeText.slice(0, 12000),
@@ -304,6 +318,8 @@ async function sendMessage(text) {
     }
 
     state.messages.push({ role: "assistant", content: data.reply || "我没有收到有效回复，请再试一次。" });
+    state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
+    state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
     startPrepTimer();
   } catch (error) {
     state.messages.push({
@@ -323,19 +339,28 @@ themeToggle.addEventListener("click", () => {
   render();
 });
 
-clearButton.addEventListener("click", () => {
-  state.messages = [welcomeMessage];
+function resetConversation() {
+  state.messages = [];
+  state.followupMode = "new_question";
+  state.followupCount = 0;
   stopTimer();
+}
+
+clearButton.addEventListener("click", () => {
+  resetConversation();
   render();
+  requestOpeningQuestion();
 });
 
 trainingModeSelect.addEventListener("change", () => {
   state.trainingMode = trainingModeSelect.value;
+  resetConversation();
   if (state.trainingMode !== "resume") {
     state.activeResumeSection = null;
     renderResumeHint();
   }
   render();
+  requestOpeningQuestion();
 });
 
 prepSecondsInput.addEventListener("input", () => {
@@ -397,11 +422,20 @@ clearResumeButton.addEventListener("click", () => {
   state.resumeText = "";
   state.resumeSections = [];
   state.activeResumeSection = null;
+  state.followupMode = "new_question";
+  state.followupCount = 0;
   resumeUpload.value = "";
   setResumeStatus("请选择文字版 PDF 简历。");
   resumeViewer.replaceChildren(createEmptyResume());
   resumeHint.textContent = "点击一段简历内容，标记面试官正在追问的部分。";
   render();
+});
+
+stopFollowupButton.addEventListener("click", () => {
+  state.followupMode = "new_question";
+  state.followupCount = 0;
+  render();
+  requestOpeningQuestion({ append: true, force: true });
 });
 
 async function extractPdfText(file) {
@@ -524,4 +558,39 @@ chatForm.addEventListener("submit", (event) => {
   sendMessage(text);
 });
 
+async function requestOpeningQuestion({ append = false, force = false } = {}) {
+  if (state.messages.length && !force && !append) {
+    render();
+    return;
+  }
+
+  setSending(true);
+  connectionStatus.textContent = "正在生成开场问题...";
+
+  try {
+    const response = await fetch("/api/opening-question", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trainingMode: state.trainingMode }),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "开场问题生成失败。");
+    }
+
+    const openingMessage = { role: "assistant", content: data.reply || "请简单做一个自我介绍。" };
+    state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
+    state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
+    state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
+  } catch {
+    const openingMessage = { role: "assistant", content: "请简单做一个自我介绍。" };
+    state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
+  } finally {
+    setSending(false);
+    render();
+  }
+}
+
 render();
+requestOpeningQuestion();

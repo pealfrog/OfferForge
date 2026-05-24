@@ -131,6 +131,51 @@ textarea:disabled {
   padding: 0 16px 16px;
 }
 
+.followup-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.followup-card h2 {
+  font-size: 1rem;
+}
+
+.followup-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.followup-state[data-active="true"] {
+  border-color: color-mix(in srgb, var(--prep) 50%, var(--line));
+  background: color-mix(in srgb, var(--prep-soft) 60%, var(--surface));
+}
+
+.followup-state span,
+.followup-state strong {
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.followup-state span {
+  color: var(--muted);
+}
+
+.followup-state strong {
+  color: var(--text);
+}
+
+.stop-followup-button {
+  width: 100%;
+  min-height: 38px;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent);
@@ -526,6 +571,12 @@ button:hover:not(:disabled) {
   border-top-color: var(--prep-strong);
   border-radius: 999px;
   animation: spin 780ms linear infinite;
+}
+
+.resume-config.is-loading .config-note {
+  color: var(--prep-strong);
+  font-weight: 800;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
 }
 
 @keyframes spin {
