@@ -59,10 +59,16 @@ let recorder = {
   isRecording: false,
 };
 let resumeSectionsSignature = "";
-let timer = {
+let textTimer = {
   phase: "idle",
-  durationMs: 0,
   startedAt: 0,
+  elapsedMs: 0,
+  intervalId: null,
+};
+let voiceTimer = {
+  phase: "idle",
+  startedAt: 0,
+  elapsedMs: 0,
   intervalId: null,
 };
 
@@ -112,8 +118,8 @@ function render() {
   resumePanel.hidden = state.trainingMode !== "resume";
   resumeConfig.classList.toggle("is-loading", isFormattingResume);
   clearResumeButton.hidden = !state.resumeName;
-  timerPanel.hidden = !state.timerVisible;
-  showTimerButton.hidden = state.timerVisible;
+  timerPanel.hidden = !state.timerVisible || activeComposerTab === "feedback";
+  showTimerButton.hidden = state.timerVisible || activeComposerTab === "feedback";
   renderFollowupState();
   messagesEl.replaceChildren(...state.messages.map(createMessage));
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -222,6 +228,7 @@ function setSending(nextValue) {
   sendButton.disabled = nextValue;
   messageInput.disabled = nextValue;
   recordButton.disabled = nextValue || isAnalyzingVoice;
+  connectionStatus.classList.remove("is-busy");
   connectionStatus.textContent = nextValue ? "AI 正在生成回复..." : "已连接本地代理，可以继续对话。";
 }
 
@@ -247,6 +254,7 @@ function setComposerTab(tabName) {
   if (tabName === "text") {
     messageInput.focus();
   }
+  renderTimer();
 }
 
 function formatMilliseconds(totalMs) {
@@ -258,83 +266,86 @@ function formatMilliseconds(totalMs) {
 }
 
 function currentTimerMs() {
-  if (timer.phase === "preparing") {
-    return timer.durationMs - (performance.now() - timer.startedAt);
+  const activeTimer = activeComposerTab === "voice" ? voiceTimer : textTimer;
+
+  if (activeTimer.phase === "answering" || activeTimer.phase === "recording") {
+    return performance.now() - activeTimer.startedAt;
   }
 
-  if (timer.phase === "answering") {
-    return performance.now() - timer.startedAt;
-  }
-
-  return 0;
+  return activeTimer.elapsedMs || 0;
 }
 
 function renderTimer() {
   const labels = {
     idle: "等待问题",
-    preparing: "准备中",
-    answering: "正式作答",
+    answering: "文本作答",
+    recording: "语音录制",
+    finished: "本次录音",
   };
+  const activeTimer = activeComposerTab === "voice" ? voiceTimer : textTimer;
 
-  timerPhase.textContent = labels[timer.phase];
-  timerValue.textContent = formatMilliseconds(currentTimerMs());
-  timerPanel.dataset.phase = timer.phase;
-}
-
-function stopTimer(nextPhase = "idle") {
-  if (timer.intervalId) {
-    clearInterval(timer.intervalId);
-  }
-
-  timer = {
-    phase: nextPhase,
-    durationMs: 0,
-    startedAt: 0,
-    intervalId: null,
-  };
-  renderTimer();
-}
-
-function startAnswerTimer() {
-  if (timer.intervalId) {
-    clearInterval(timer.intervalId);
-  }
-
-  timer = {
-    phase: "answering",
-    durationMs: 0,
-    startedAt: performance.now(),
-    intervalId: window.setInterval(() => {
-      renderTimer();
-    }, 33),
-  };
-  renderTimer();
-}
-
-function startPrepTimer() {
-  const prepSeconds = Math.max(0, Math.min(60, Number(state.prepSeconds) || 0));
-
-  if (prepSeconds === 0) {
-    startAnswerTimer();
+  if (activeComposerTab === "feedback") {
+    timerPanel.hidden = true;
+    showTimerButton.hidden = true;
     return;
   }
 
-  if (timer.intervalId) {
-    clearInterval(timer.intervalId);
+  timerPanel.hidden = !state.timerVisible;
+  showTimerButton.hidden = state.timerVisible;
+  timerPhase.textContent = labels[activeTimer.phase] || "等待问题";
+  timerValue.textContent = formatMilliseconds(currentTimerMs());
+  timerPanel.dataset.phase = activeTimer.phase;
+}
+
+function stopSpecificTimer(timerState, nextPhase = "idle") {
+  if (timerState.intervalId) {
+    clearInterval(timerState.intervalId);
   }
 
-  timer = {
-    phase: "preparing",
-    durationMs: prepSeconds * 1000,
-    startedAt: performance.now(),
-    intervalId: window.setInterval(() => {
-      if (currentTimerMs() <= 0) {
-        startAnswerTimer();
-        return;
-      }
+  const elapsedMs =
+    timerState.phase === "answering" || timerState.phase === "recording"
+      ? performance.now() - timerState.startedAt
+      : timerState.elapsedMs || 0;
 
-      renderTimer();
-    }, 33),
+  return {
+    phase: nextPhase,
+    startedAt: 0,
+    elapsedMs: nextPhase === "idle" ? 0 : elapsedMs,
+    intervalId: null,
+  };
+}
+
+function stopTextTimer(nextPhase = "idle") {
+  textTimer = stopSpecificTimer(textTimer, nextPhase);
+  renderTimer();
+}
+
+function stopVoiceTimer(nextPhase = "idle") {
+  voiceTimer = stopSpecificTimer(voiceTimer, nextPhase);
+  renderTimer();
+}
+
+function startTimer(timerName) {
+  if (timerName === "voice") {
+    textTimer = stopSpecificTimer(textTimer, "idle");
+    voiceTimer = stopSpecificTimer(voiceTimer, "idle");
+    voiceTimer = {
+      phase: "recording",
+      startedAt: performance.now(),
+      elapsedMs: 0,
+      intervalId: window.setInterval(renderTimer, 33),
+    };
+    renderTimer();
+    return;
+  }
+
+  textTimer = stopSpecificTimer(textTimer, "idle");
+  voiceTimer = stopSpecificTimer(voiceTimer, "idle");
+  textTimer = {
+    phase: "answering",
+    startedAt: performance.now(),
+    elapsedMs: 0,
+    intervalId: window.setInterval(renderTimer, 33),
   };
   renderTimer();
 }
@@ -378,7 +389,7 @@ function applyResumeResponse(data) {
 }
 
 async function sendMessage(text) {
-  stopTimer();
+  stopTextTimer("idle");
   state.messages.push({ role: "user", content: text });
   render();
   setSending(true);
@@ -407,16 +418,16 @@ async function sendMessage(text) {
     state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
     applyResumeResponse(data);
     if (state.trainingMode === "resume" && state.activeResumeSection === null) {
-      stopTimer();
+      stopTextTimer("idle");
     } else {
-      startPrepTimer();
+      startTimer("text");
     }
   } catch (error) {
     state.messages.push({
       role: "assistant",
       content: `请求失败：${error.message}`,
     });
-    stopTimer();
+    stopTextTimer("idle");
   } finally {
     setSending(false);
     render();
@@ -435,7 +446,12 @@ function resetConversation() {
   state.followupCount = 0;
   state.resumeCursor = 0;
   state.activeResumeSection = null;
-  stopTimer();
+  voiceAnalyses = [];
+  voiceFeedback.replaceChildren();
+  voiceFeedback.hidden = true;
+  feedbackEmpty.hidden = false;
+  stopTextTimer("idle");
+  stopVoiceTimer("idle");
 }
 
 clearButton.addEventListener("click", () => {
@@ -923,6 +939,7 @@ async function startRecording() {
 
   source.connect(processor);
   processor.connect(context.destination);
+  startTimer("voice");
   setVoiceStatus("正在录音，回答结束后点击停止并分析。");
 }
 
@@ -936,6 +953,7 @@ function cleanupRecorder() {
 async function stopRecordingAndAnalyze() {
   const durationMs = Math.max(0, performance.now() - recorder.startedAt);
   recorder.isRecording = false;
+  stopVoiceTimer("finished");
   setVoiceStatus("正在整理录音并提交分析...", true);
   cleanupRecorder();
 
@@ -1012,6 +1030,7 @@ recordButton.addEventListener("click", async () => {
     }
   } catch (error) {
     recorder.isRecording = false;
+    stopVoiceTimer("idle");
     cleanupRecorder();
     setVoiceStatus(`语音失败：${error.message}`);
   }
@@ -1058,7 +1077,7 @@ async function requestOpeningQuestion({ append = false, force = false } = {}) {
     return;
   }
 
-  stopTimer();
+  stopTextTimer("idle");
   setSending(true);
   connectionStatus.textContent = "正在生成开场问题...";
 
@@ -1078,10 +1097,11 @@ async function requestOpeningQuestion({ append = false, force = false } = {}) {
     state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
     state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
     state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
-    startPrepTimer();
+    startTimer("text");
   } catch {
     const openingMessage = { role: "assistant", content: "请简单做一个自我介绍。" };
     state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
+    startTimer("text");
   } finally {
     setSending(false);
     render();
@@ -1095,9 +1115,10 @@ async function requestResumeQuestion({ append = false, advanceToNext = false } =
     return;
   }
 
-  stopTimer();
+  stopTextTimer("idle");
   setSending(true);
   connectionStatus.textContent = "正在扫描简历并生成问题...";
+  connectionStatus.classList.add("is-busy");
 
   try {
     const payload = buildPayload();
@@ -1121,16 +1142,16 @@ async function requestResumeQuestion({ append = false, advanceToNext = false } =
     applyResumeResponse(data);
 
     if (state.activeResumeSection !== null) {
-      startPrepTimer();
+      startTimer("text");
     } else {
-      stopTimer();
+      stopTextTimer("idle");
     }
   } catch (error) {
     state.messages.push({
       role: "assistant",
       content: `请求失败：${error.message}`,
     });
-    stopTimer();
+    stopTextTimer("idle");
   } finally {
     setSending(false);
     render();
