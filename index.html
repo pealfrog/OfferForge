@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starter Web UI</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Starter dashboard">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Server is live</p>
+            <h1>Starter Web UI</h1>
+          </div>
+          <button class="icon-button" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
+            <span id="themeIcon">☾</span>
+          </button>
+        </header>
+
+        <section class="status-panel">
+          <div class="status-copy">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div>
+              <h2 id="statusTitle">网站已启动</h2>
+              <p id="statusText">监听外部网络地址，前端交互可用。</p>
+            </div>
+          </div>
+          <button class="primary-button" id="statusButton" type="button">切换状态</button>
+        </section>
+
+        <section class="grid">
+          <article class="panel counter-panel">
+            <div class="panel-heading">
+              <h2>计数器</h2>
+              <span id="countBadge">0</span>
+            </div>
+            <div class="counter-value" id="countValue">0</div>
+            <div class="button-row">
+              <button class="secondary-button" id="minusButton" type="button">-1</button>
+              <button class="secondary-button" id="plusButton" type="button">+1</button>
+              <button class="ghost-button" id="resetButton" type="button">重置</button>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <h2>待办</h2>
+              <span id="todoCount">2 项</span>
+            </div>
+            <form class="todo-form" id="todoForm">
+              <input id="todoInput" name="todo" type="text" placeholder="新增事项" autocomplete="off" />
+              <button class="primary-button compact" type="submit">添加</button>
+            </form>
+            <ul class="todo-list" id="todoList"></ul>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
