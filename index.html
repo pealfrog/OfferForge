@@ -35,8 +35,9 @@
               <div class="control-group">
                 <label for="trainingModeSelect">训练方向</label>
                 <select id="trainingModeSelect">
-                  <option value="general">通用型面试问题</option>
-                  <option value="resume">针对简历的提问和追问</option>
+                  <option value="general">通用类问题问答</option>
+                  <option value="resume">针对简历提问追问</option>
+                  <option value="project">针对应聘项目个性化训练</option>
                 </select>
               </div>
 
@@ -55,39 +56,8 @@
               </section>
 
               <div class="control-group">
-                <label for="scenarioSelect">面试场景</label>
-                <select id="scenarioSelect">
-                  <option value="保研面试">保研面试</option>
-                  <option value="就业面试">就业面试</option>
-                  <option value="项目经历追问">项目经历追问</option>
-                  <option value="通用压力面试">通用压力面试</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="roleInput">目标方向</label>
-                <input id="roleInput" type="text" value="计算机专业大三学生" autocomplete="off" />
-              </div>
-
-              <div class="control-group">
-                <label for="profileInput">个人背景</label>
-                <textarea id="profileInput" rows="5" placeholder="例如：熟悉 Java，做过推荐系统项目，准备保研夏令营。"></textarea>
-              </div>
-
-              <div class="control-group">
                 <label for="prepSecondsInput">准备时间（秒）</label>
                 <input id="prepSecondsInput" type="number" min="0" max="60" step="1" value="5" />
-              </div>
-
-              <div class="hint-list" aria-label="训练要点">
-                <div>
-                  <strong>当前能力</strong>
-                  <span>基础多轮交流</span>
-                </div>
-                <div>
-                  <strong>回答风格</strong>
-                  <span>面试官追问 + 简短反馈</span>
-                </div>
               </div>
             </div>
           </section>

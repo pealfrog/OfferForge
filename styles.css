@@ -203,30 +203,6 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.hint-list {
-  display: grid;
-  gap: 10px;
-}
-
-.hint-list div {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--surface-soft);
-}
-
-.hint-list strong,
-.hint-list span {
-  font-size: 0.9rem;
-}
-
-.hint-list span {
-  color: var(--muted);
-  text-align: right;
-}
-
 .main-panel {
   min-width: 0;
   min-height: 0;
@@ -686,10 +662,6 @@ button:hover:not(:disabled) {
     min-height: 720px;
     grid-template-rows: auto auto minmax(240px, 1fr) auto;
     gap: 12px;
-  }
-
-  .hint-list {
-    margin-top: 0;
   }
 
   .chat-panel {

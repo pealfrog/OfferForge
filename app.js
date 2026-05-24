@@ -7,9 +7,6 @@ const themeToggle = document.querySelector("#themeToggle");
 const themeIcon = document.querySelector("#themeIcon");
 const clearButton = document.querySelector("#clearButton");
 const trainingModeSelect = document.querySelector("#trainingModeSelect");
-const scenarioSelect = document.querySelector("#scenarioSelect");
-const roleInput = document.querySelector("#roleInput");
-const profileInput = document.querySelector("#profileInput");
 const prepSecondsInput = document.querySelector("#prepSecondsInput");
 const resumeConfig = document.querySelector("#resumeConfig");
 const resumeUpload = document.querySelector("#resumeUpload");
@@ -53,9 +50,6 @@ function loadState() {
   const baseState = {
     dark: false,
     trainingMode: "general",
-    scenario: "保研面试",
-    role: "计算机专业大三学生",
-    profile: "",
     prepSeconds: 5,
     timerVisible: true,
     resumeName: "",
@@ -89,9 +83,6 @@ function render() {
   root.classList.toggle("dark", state.dark);
   themeIcon.textContent = state.dark ? "☼" : "☾";
   trainingModeSelect.value = state.trainingMode;
-  scenarioSelect.value = state.scenario;
-  roleInput.value = state.role;
-  profileInput.value = state.profile;
   prepSecondsInput.value = state.prepSeconds;
   resumeConfig.hidden = state.trainingMode !== "resume";
   resumePanel.hidden = state.trainingMode !== "resume";
@@ -279,9 +270,10 @@ function startPrepTimer() {
 function buildPayload() {
   return {
     trainingMode: state.trainingMode,
-    scenario: state.scenario,
-    role: state.role,
-    profile: state.profile,
+    context:
+      state.trainingMode === "project"
+        ? "大三本科生，计算机/AI 方向，正在准备应聘项目训练。"
+        : "大三本科生，计算机/AI 方向。",
     resume: {
       name: state.resumeName,
       text: state.resumeText.slice(0, 12000),
@@ -339,23 +331,11 @@ clearButton.addEventListener("click", () => {
 
 trainingModeSelect.addEventListener("change", () => {
   state.trainingMode = trainingModeSelect.value;
-  state.scenario = state.trainingMode === "resume" ? "项目经历追问" : "保研面试";
+  if (state.trainingMode !== "resume") {
+    state.activeResumeSection = null;
+    renderResumeHint();
+  }
   render();
-});
-
-scenarioSelect.addEventListener("change", () => {
-  state.scenario = scenarioSelect.value;
-  render();
-});
-
-roleInput.addEventListener("input", () => {
-  state.role = roleInput.value.trim() || "计算机专业大三学生";
-  saveState();
-});
-
-profileInput.addEventListener("input", () => {
-  state.profile = profileInput.value.trim();
-  saveState();
 });
 
 prepSecondsInput.addEventListener("input", () => {
@@ -419,6 +399,8 @@ clearResumeButton.addEventListener("click", () => {
   state.activeResumeSection = null;
   resumeUpload.value = "";
   setResumeStatus("请选择文字版 PDF 简历。");
+  resumeViewer.replaceChildren(createEmptyResume());
+  resumeHint.textContent = "点击一段简历内容，标记面试官正在追问的部分。";
   render();
 });
 

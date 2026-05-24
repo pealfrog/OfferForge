@@ -35,13 +35,11 @@ async function loadCredentials() {
   return { apiKey, endpoint };
 }
 
-function buildSystemPrompt({ trainingMode, scenario, role, profile, resume }) {
+function buildSystemPrompt({ trainingMode, context, resume }) {
   const prompt = [
-    "你是 OfferForge 的 AI 模拟面试官，目标是帮助大三学生进行面试训练。",
-    `训练方向：${trainingMode === "resume" ? "针对简历的提问和追问" : "通用型面试问题"}`,
-    `当前训练场景：${scenario || "通用面试"}`,
-    `用户目标方向：${role || "未填写"}`,
-    profile ? `用户背景：${profile}` : "用户背景：暂未填写。",
+    "你是 OfferForge 的 AI 模拟面试官，目标用户是大三本科生，方向偏计算机/AI。",
+    `训练模式：${trainingMode === "resume" ? "针对简历提问追问" : trainingMode === "project" ? "针对应聘项目个性化训练" : "通用类问题问答"}`,
+    `基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
   ];
 
   if (trainingMode === "resume") {
