@@ -1,5 +1,5 @@
-名称：api-key-20260524171902
-API-KEY：0660a61c-c8aa-4339-a28d-4c90c4f624f5
+API-App-Key：5366874006
+API-Access-Key：rGUJV_mtma13710_x7tQUrI4Nu73vFKX
 快速接入测试：
 ```
 curl -L -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit' \

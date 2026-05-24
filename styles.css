@@ -695,9 +695,135 @@ button:hover:not(:disabled) {
   background: var(--surface);
 }
 
+.composer-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
 .composer textarea {
   min-height: 70px;
   max-height: 180px;
+}
+
+.voice-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-soft) 82%, var(--surface));
+}
+
+.voice-panel.is-busy {
+  border-color: color-mix(in srgb, var(--prep) 42%, var(--line));
+  background: color-mix(in srgb, var(--prep-soft) 42%, var(--surface));
+}
+
+.voice-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-button {
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+
+.voice-button.is-recording {
+  color: #ffffff;
+  background: #b95047;
+  border-color: #b95047;
+}
+
+.voice-status {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.voice-panel.is-busy .voice-status::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  display: inline-block;
+  margin-right: 7px;
+  vertical-align: -2px;
+  border: 2px solid color-mix(in srgb, var(--prep) 24%, transparent);
+  border-top-color: var(--prep-strong);
+  border-radius: 999px;
+  animation: spin 780ms linear infinite;
+}
+
+.voice-playback,
+.voice-feedback {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+}
+
+.voice-playback[hidden],
+.voice-feedback[hidden] {
+  display: none;
+}
+
+.voice-playback audio {
+  width: 100%;
+  height: 38px;
+}
+
+.voice-playback-label {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.voice-playback-detail,
+.voice-playback-hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.voice-playback-hint {
+  color: var(--prep-strong);
+}
+
+.voice-summary {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.voice-metrics {
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.voice-debug {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.voice-feedback ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
 }
 
 @media (max-width: 900px) {
@@ -743,6 +869,11 @@ button:hover:not(:disabled) {
 
   .composer {
     grid-template-columns: 1fr;
+  }
+
+  .voice-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .primary-button {

@@ -1,21 +1,38 @@
-import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
 const port = Number(process.env.PORT || 3001);
 const apiKeyPath = process.env.QIANWEN_API_KEY_FILE || join(process.cwd(), "QianWen-API");
+const doubaoApiKeyPath = process.env.DOUBAO_API_KEY_FILE || join(process.cwd(), "Doubao-API");
 const basicQuestionPath = process.env.BASIC_QUESTION_FILE || join(process.cwd(), "basic_question");
 const model = process.env.QIANWEN_MODEL || "qwen-plus";
+const uploadDir = process.env.OFFERFORGE_UPLOAD_DIR || "/var/www/offerforge/uploads";
+const defaultPublicBaseUrl = process.env.PUBLIC_BASE_URL || "";
+const voiceDownloadBaseUrl = process.env.VOICE_DOWNLOAD_BASE_URL || "";
+const maxJsonBytes = 16 * 1024 * 1024;
+const doubaoSubmitEndpoint =
+  process.env.DOUBAO_SUBMIT_ENDPOINT || "https://openspeech-direct.zijieapi.com/api/v3/auc/bigmodel/submit";
+const doubaoQueryEndpoint =
+  process.env.DOUBAO_QUERY_ENDPOINT || "https://openspeech-direct.zijieapi.com/api/v3/auc/bigmodel/query";
 
 const jsonHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
 
-async function readJson(request) {
+async function readJson(request, limitBytes = 1024 * 1024) {
   const chunks = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
+    totalBytes += chunk.length;
+    if (totalBytes > limitBytes) {
+      const error = new Error("请求体过大。");
+      error.status = 413;
+      throw error;
+    }
     chunks.push(chunk);
   }
 
@@ -34,6 +51,45 @@ async function loadCredentials() {
   }
 
   return { apiKey, endpoint };
+}
+
+async function loadDoubaoCredentials() {
+  const raw = await readFile(doubaoApiKeyPath, "utf8");
+  const appId =
+    raw.match(/API-App-Key[：:]\s*([0-9]+)/)?.[1]?.trim() ||
+    raw.match(/appid\s*=\s*["']([^"']+)["']/)?.[1]?.trim();
+  const accessKey = raw.match(/API-Access-Key[：:]\s*([^\s]+)/)?.[1]?.trim();
+  const explicitApiKey =
+    raw.match(/^API-KEY[：:]\s*([0-9a-f-]{36})/im)?.[1]?.trim() ||
+    raw.match(/x-api-key:\s*([0-9a-f-]{36})/i)?.[1]?.trim();
+
+  if (appId && accessKey && process.env.DOUBAO_AUTH_MODE !== "apikey") {
+    return {
+      mode: "legacy",
+      appId,
+      accessKey,
+      resourceId: process.env.DOUBAO_RESOURCE_ID || "volc.bigasr.auc",
+    };
+  }
+
+  if (explicitApiKey) {
+    return {
+      mode: "apikey",
+      apiKey: explicitApiKey,
+      resourceId: process.env.DOUBAO_RESOURCE_ID || "volc.seedasr.auc",
+    };
+  }
+
+  if (appId && accessKey) {
+    return {
+      mode: "legacy",
+      appId,
+      accessKey,
+      resourceId: process.env.DOUBAO_RESOURCE_ID || "volc.bigasr.auc",
+    };
+  }
+
+  throw new Error("Doubao-API 文件中没有找到有效的 App-Key/Access-Key 或 API-Key。");
 }
 
 async function loadBasicQuestions() {
@@ -318,6 +374,465 @@ function parseResumeDecision(rawReply) {
   }
 }
 
+function getRequestOrigin(request) {
+  if (defaultPublicBaseUrl) {
+    return defaultPublicBaseUrl.replace(/\/$/, "");
+  }
+
+  const forwardedProto = request.headers["x-forwarded-proto"];
+  const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || "http";
+  const host = request.headers["x-forwarded-host"] || request.headers.host;
+
+  if (!host) {
+    const error = new Error("无法确定公网访问地址，请通过 https://服务器IP 访问页面，或设置 PUBLIC_BASE_URL。");
+    error.status = 500;
+    throw error;
+  }
+
+  const normalizedHost = String(Array.isArray(host) ? host[0] : host).toLowerCase();
+  return `${proto}://${normalizedHost}`.replace(/\/$/, "");
+}
+
+function getVoiceDownloadOrigin(request) {
+  if (voiceDownloadBaseUrl) {
+    return voiceDownloadBaseUrl.replace(/\/$/, "");
+  }
+
+  const origin = getRequestOrigin(request);
+  return origin.replace(/^https:\/\//i, "http://");
+}
+
+function parseAudioPayload(body) {
+  const mimeType = String(body.mimeType || "").toLowerCase();
+  const audioBase64 = typeof body.audioBase64 === "string" ? body.audioBase64 : "";
+
+  if (!audioBase64) {
+    const error = new Error("缺少录音数据。");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedBase64 = audioBase64.replace(/^data:[^,]+,/, "");
+  const buffer = Buffer.from(normalizedBase64, "base64");
+
+  if (!buffer.length) {
+    const error = new Error("录音数据为空。");
+    error.status = 400;
+    throw error;
+  }
+
+  if (buffer.length > 10 * 1024 * 1024) {
+    const error = new Error("录音文件过大，请控制在 10MB 以内。");
+    error.status = 413;
+    throw error;
+  }
+
+  if (mimeType.includes("wav") || mimeType.includes("wave")) {
+    return { buffer, extension: "wav", format: "wav", codec: "raw" };
+  }
+
+  if (mimeType.includes("ogg")) {
+    return { buffer, extension: "ogg", format: "ogg", codec: "opus" };
+  }
+
+  const error = new Error("当前只支持 WAV 或 OGG 录音格式。");
+  error.status = 400;
+  throw error;
+}
+
+function safeNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeTimeMs(value) {
+  const numeric = safeNumber(value);
+  if (numeric === null) {
+    return 0;
+  }
+
+  return numeric > 100000 ? numeric / 1000 : numeric;
+}
+
+function collectAdditionsValue(additions, key) {
+  if (!additions) {
+    return null;
+  }
+
+  if (typeof additions === "string") {
+    try {
+      return collectAdditionsValue(JSON.parse(additions), key);
+    } catch {
+      return null;
+    }
+  }
+
+  if (Array.isArray(additions)) {
+    for (const item of additions) {
+      const value = collectAdditionsValue(item, key);
+      if (value !== null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  if (typeof additions === "object") {
+    if (additions[key] !== undefined) {
+      return safeNumber(additions[key]);
+    }
+
+    for (const value of Object.values(additions)) {
+      const nestedValue = collectAdditionsValue(value, key);
+      if (nestedValue !== null) {
+        return nestedValue;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractDoubaoResult(data) {
+  const rawResult = Array.isArray(data?.result) ? data.result[0] : data?.result || data;
+  return {
+    text: String(rawResult?.text || "").trim(),
+    utterances: Array.isArray(rawResult?.utterances) ? rawResult.utterances : [],
+    audioInfo: data?.audio_info || rawResult?.audio_info || data?.audioInfo || rawResult?.audioInfo || {},
+    rawResult,
+  };
+}
+
+function normalizeUtterances(result) {
+  const utterances = Array.isArray(result?.utterances) ? result.utterances : [];
+
+  return utterances
+    .map((utterance) => ({
+      text: String(utterance.text || "").trim(),
+      startMs: normalizeTimeMs(utterance.start_time ?? utterance.startTime),
+      endMs: normalizeTimeMs(utterance.end_time ?? utterance.endTime),
+      speechRate: collectAdditionsValue(utterance.additions, "speech_rate"),
+      volume: collectAdditionsValue(utterance.additions, "volume"),
+    }))
+    .filter((utterance) => utterance.text || utterance.endMs > utterance.startMs);
+}
+
+function average(numbers) {
+  const values = numbers.filter((value) => Number.isFinite(value));
+  if (!values.length) {
+    return null;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildVoiceMetrics({ result, submittedDurationMs }) {
+  const text = String(result?.text || "").trim();
+  const utterances = normalizeUtterances(result);
+  const resultDurationMs = safeNumber(result?.audioInfo?.duration);
+  const durationSeconds = Math.max(
+    0.1,
+    (resultDurationMs ? normalizeTimeMs(resultDurationMs) : submittedDurationMs || 0) / 1000,
+  );
+  let longPauseCount = 0;
+  let totalPauseMs = 0;
+
+  for (let index = 1; index < utterances.length; index += 1) {
+    const gapMs = utterances[index].startMs - utterances[index - 1].endMs;
+    if (gapMs > 0) {
+      totalPauseMs += gapMs;
+    }
+    if (gapMs >= 1200) {
+      longPauseCount += 1;
+    }
+  }
+
+  const textWithoutSpaces = text.replace(/\s/g, "");
+  const charsPerMinute = Math.round((textWithoutSpaces.length / durationSeconds) * 60);
+  const avgSpeechRate = average(utterances.map((utterance) => utterance.speechRate));
+  const avgVolume = average(utterances.map((utterance) => utterance.volume));
+
+  return {
+    durationSeconds: Number(durationSeconds.toFixed(1)),
+    charsPerMinute,
+    utteranceCount: utterances.length,
+    longPauseCount,
+    totalPauseSeconds: Number((totalPauseMs / 1000).toFixed(1)),
+    avgUtteranceSeconds: utterances.length
+      ? Number(
+          (
+            utterances.reduce((sum, utterance) => sum + Math.max(0, utterance.endMs - utterance.startMs), 0) /
+            utterances.length /
+            1000
+          ).toFixed(1),
+        )
+      : null,
+    avgSpeechRate: avgSpeechRate === null ? null : Number(avgSpeechRate.toFixed(2)),
+    avgVolume: avgVolume === null ? null : Number(avgVolume.toFixed(1)),
+  };
+}
+
+function buildVoiceFeedbackPrompt({ text, metrics }) {
+  return [
+    "你是面试表达训练教练。请基于语音识别文本和客观指标，给用户中文反馈。",
+    "目标用户是大三本科生，计算机/AI 方向，正在练习面试回答。",
+    "只输出 JSON，格式为：{\"summary\":\"一句话总评\",\"suggestions\":[\"建议1\",\"建议2\",\"建议3\"]}",
+    "反馈重点：语速、停顿、表达清晰度、回答结构。不要虚构音色、情绪或口音。",
+    "如果转写文本很短，要提醒样本不足。",
+    `转写文本：${text || "无有效转写文本"}`,
+    `指标：${JSON.stringify(metrics)}`,
+  ].join("\n");
+}
+
+function parseVoiceFeedback(rawReply, fallbackSummary) {
+  try {
+    const jsonText = rawReply.match(/\{[\s\S]*\}/)?.[0] || rawReply;
+    const parsed = JSON.parse(jsonText);
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary.trim() : fallbackSummary,
+      suggestions: Array.isArray(parsed.suggestions)
+        ? parsed.suggestions.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+        : [],
+    };
+  } catch {
+    return { summary: fallbackSummary, suggestions: rawReply ? [rawReply.trim()] : [] };
+  }
+}
+
+function buildRuleBasedVoiceFeedback(metrics, text) {
+  const suggestions = [];
+
+  if (metrics.charsPerMinute > 260) {
+    suggestions.push("语速偏快，回答关键结论后可以主动停半拍，让面试官有时间消化。");
+  } else if (metrics.charsPerMinute < 120) {
+    suggestions.push("语速偏慢，建议先给结论，再补两三个关键依据，减少犹豫铺垫。");
+  } else {
+    suggestions.push("语速整体处在较容易理解的区间，可以继续保持。");
+  }
+
+  if (metrics.longPauseCount >= 2) {
+    suggestions.push("长停顿较多，可以用“我分三点说”这类结构句争取组织时间。");
+  }
+
+  if (text.replace(/\s/g, "").length < 30) {
+    suggestions.push("本次录音样本偏短，建议用 30 秒以上回答再做判断。");
+  }
+
+  return {
+    summary: "已完成语音转写和表达指标分析。",
+    suggestions: suggestions.slice(0, 3),
+  };
+}
+
+function getDoubaoHeaders(response) {
+  return {
+    statusCode: response.headers.get("X-Api-Status-Code") || "",
+    message: response.headers.get("X-Api-Message") || "",
+    logId: response.headers.get("X-Tt-Logid") || "",
+  };
+}
+
+function createDoubaoError(action, headers, data, fallbackStatus = 502) {
+  const details = [
+    headers.statusCode ? `状态码 ${headers.statusCode}` : "",
+    headers.message ? `消息 ${headers.message}` : "",
+    headers.logId ? `logid ${headers.logId}` : "",
+  ]
+    .filter(Boolean)
+    .join("，");
+  const bodyMessage = data?.message || data?.error || data?.error_msg || "";
+  const error = new Error(`${action}失败${details ? `：${details}` : ""}${bodyMessage ? `，${bodyMessage}` : ""}`);
+  error.status = fallbackStatus;
+  error.doubao = headers;
+  return error;
+}
+
+function buildDoubaoHeaders(credentials, requestId, extraHeaders = {}) {
+  const authHeaders =
+    credentials.mode === "legacy"
+      ? {
+          "X-Api-App-Key": credentials.appId,
+          "X-Api-Access-Key": credentials.accessKey,
+        }
+      : {
+          "X-Api-Key": credentials.apiKey,
+        };
+
+  return {
+    ...authHeaders,
+    "X-Api-Resource-Id": credentials.resourceId,
+    "X-Api-Request-Id": requestId,
+    ...extraHeaders,
+  };
+}
+
+async function submitDoubaoTask({ credentials, requestId, audioUrl }) {
+  const response = await fetch(doubaoSubmitEndpoint, {
+    method: "POST",
+    headers: buildDoubaoHeaders(credentials, requestId, {
+      "Content-Type": "application/json",
+      "X-Api-Sequence": "-1",
+    }),
+    body: JSON.stringify({
+      user: { uid: "OfferForge" },
+      audio: { url: audioUrl },
+      request: {
+        model_name: "bigmodel",
+        enable_itn: true,
+        enable_punc: true,
+        enable_ddc: true,
+        enable_speaker_info: true,
+        enable_channel_split: false,
+        show_utterances: true,
+        vad_segment: false,
+        sensitive_words_filter: "",
+        corpus: {
+          correct_table_name: "",
+          context: "",
+        },
+      },
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  const headers = getDoubaoHeaders(response);
+
+  if (!response.ok || (headers.statusCode && headers.statusCode !== "20000000")) {
+    throw createDoubaoError("豆包语音任务提交", headers, data, response.status || 502);
+  }
+
+  return headers;
+}
+
+async function queryDoubaoTask({ credentials, requestId, submitLogId }) {
+  let lastHeaders = {};
+  let lastData = {};
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, attempt < 3 ? 900 : 1500));
+
+    const response = await fetch(doubaoQueryEndpoint, {
+      method: "POST",
+      headers: buildDoubaoHeaders(credentials, requestId, {
+        "Content-Type": "application/json",
+        ...(submitLogId ? { "X-Tt-Logid": submitLogId } : {}),
+      }),
+      body: "{}",
+    });
+    const data = await response.json().catch(() => ({}));
+    const headers = getDoubaoHeaders(response);
+    const statusCode = headers.statusCode;
+    lastHeaders = headers;
+    lastData = data;
+
+    if (statusCode === "20000000") {
+      return { data, headers };
+    }
+
+    if (statusCode === "20000001" || statusCode === "20000002") {
+      continue;
+    }
+
+    if (statusCode === "20000003") {
+      const error = new Error(
+        `录音中没有检测到有效语音${headers.logId ? `（logid ${headers.logId}）` : ""}。`,
+      );
+      error.status = 422;
+      error.doubao = headers;
+      throw error;
+    }
+
+    if (!response.ok || statusCode || data?.message || data?.error) {
+      throw createDoubaoError("豆包语音任务查询", headers, data, response.status || 502);
+    }
+  }
+
+  const error = createDoubaoError(
+    "豆包语音任务查询超时",
+    lastHeaders,
+    lastData,
+    504,
+  );
+  error.message =
+    `${error.message}。若本地回放有声音，通常是豆包任务处理较慢或公网音频 URL 暂时无法被访问。`;
+  error.status = 504;
+  throw error;
+}
+
+async function handleAnalyzeVoice(request, response) {
+  try {
+    const body = await readJson(request, maxJsonBytes);
+    const { buffer, extension } = parseAudioPayload(body);
+    const requestId = randomUUID();
+    const filename = `${requestId}.${extension}`;
+    const audioUrl = `${getVoiceDownloadOrigin(request)}/uploads/${filename}`;
+    const submittedDurationMs = Math.max(0, Number(body.durationMs || 0));
+    const credentials = await loadDoubaoCredentials();
+
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(join(uploadDir, filename), buffer);
+    console.log(
+      `[voice] submit requestId=${requestId} resourceId=${credentials.resourceId} endpoint=${doubaoSubmitEndpoint} audioUrl=${audioUrl}`,
+    );
+    const submitHeaders = await submitDoubaoTask({ credentials, requestId, audioUrl });
+
+    const { data: doubaoData, headers: queryHeaders } = await queryDoubaoTask({
+      credentials,
+      requestId,
+      submitLogId: submitHeaders.logId,
+    });
+    const result = extractDoubaoResult(doubaoData);
+    const text = result.text;
+    const utterances = normalizeUtterances(result);
+    const metrics = buildVoiceMetrics({ result, submittedDurationMs });
+    const debug = {
+      requestId,
+      audioUrl,
+      submit: submitHeaders,
+      query: queryHeaders,
+      resourceId: credentials.resourceId,
+      endpoint: doubaoSubmitEndpoint,
+    };
+
+    if (!text) {
+      const error = new Error("豆包已返回完成状态，但没有返回可识别文本。请检查音频内容、凭据授权和请求参数。");
+      error.status = 422;
+      error.debug = debug;
+      throw error;
+    }
+
+    const fallbackFeedback = buildRuleBasedVoiceFeedback(metrics, text);
+    let feedback = fallbackFeedback;
+
+    try {
+      const rawFeedback = await callQianwen(
+        [{ role: "system", content: buildVoiceFeedbackPrompt({ text, metrics }) }],
+        { temperature: 0.3 },
+      );
+      feedback = parseVoiceFeedback(rawFeedback, fallbackFeedback.summary);
+      if (!feedback.suggestions.length) {
+        feedback.suggestions = fallbackFeedback.suggestions;
+      }
+    } catch {
+      feedback = fallbackFeedback;
+    }
+
+    response.writeHead(200, jsonHeaders);
+    response.end(
+      JSON.stringify({
+        text,
+        metrics,
+        utterances: utterances.slice(0, 8),
+        feedback,
+        debug,
+      }),
+    );
+  } catch (error) {
+    response.writeHead(error.status || 500, jsonHeaders);
+    response.end(JSON.stringify({ error: error.message || "语音分析失败。", debug: error.debug || error.doubao || null }));
+  }
+}
+
 async function handleFormatResume(request, response) {
   try {
     const body = await readJson(request);
@@ -498,6 +1013,11 @@ const server = createServer((request, response) => {
 
   if (request.method === "POST" && request.url === "/api/opening-question") {
     handleOpeningQuestion(request, response);
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/analyze-voice") {
+    handleAnalyzeVoice(request, response);
     return;
   }
 

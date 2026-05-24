@@ -30,12 +30,29 @@ const messagesEl = document.querySelector("#messages");
 const chatForm = document.querySelector("#chatForm");
 const messageInput = document.querySelector("#messageInput");
 const sendButton = document.querySelector("#sendButton");
+const voicePanel = document.querySelector("#voicePanel");
+const recordButton = document.querySelector("#recordButton");
+const voiceStatus = document.querySelector("#voiceStatus");
+const voicePlayback = document.querySelector("#voicePlayback");
+const voiceFeedback = document.querySelector("#voiceFeedback");
 
 const storageKey = "offerforge-chat-state";
 
 let state = loadState();
 let isSending = false;
 let isFormattingResume = false;
+let isAnalyzingVoice = false;
+let voicePlaybackUrl = "";
+let recorder = {
+  context: null,
+  source: null,
+  processor: null,
+  stream: null,
+  chunks: [],
+  sampleRate: 0,
+  startedAt: 0,
+  isRecording: false,
+};
 let resumeSectionsSignature = "";
 let timer = {
   phase: "idle",
@@ -199,7 +216,17 @@ function setSending(nextValue) {
   isSending = nextValue;
   sendButton.disabled = nextValue;
   messageInput.disabled = nextValue;
+  recordButton.disabled = nextValue || isAnalyzingVoice;
   connectionStatus.textContent = nextValue ? "AI 正在生成回复..." : "已连接本地代理，可以继续对话。";
+}
+
+function setVoiceStatus(text, busy = false) {
+  isAnalyzingVoice = busy;
+  voiceStatus.textContent = text;
+  recordButton.disabled = busy || isSending;
+  recordButton.classList.toggle("is-recording", recorder.isRecording);
+  recordButton.textContent = recorder.isRecording ? "停止并分析" : "开始录音";
+  voicePanel.classList.toggle("is-busy", busy);
 }
 
 function formatMilliseconds(totalMs) {
@@ -574,6 +601,302 @@ function splitResumeText(text) {
     .map((item) => item.slice(0, 900));
 }
 
+function flattenAudioChunks(chunks) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Float32Array(totalLength);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+  if (outputSampleRate === inputSampleRate) {
+    return buffer;
+  }
+
+  const ratio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+
+  for (let index = 0; index < newLength; index += 1) {
+    const start = Math.floor(index * ratio);
+    const end = Math.min(Math.floor((index + 1) * ratio), buffer.length);
+    let sum = 0;
+    let count = 0;
+
+    for (let sourceIndex = start; sourceIndex < end; sourceIndex += 1) {
+      sum += buffer[sourceIndex];
+      count += 1;
+    }
+
+    result[index] = count ? sum / count : 0;
+  }
+
+  return result;
+}
+
+function encodeWav(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  function writeString(offset, value) {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (const sample of samples) {
+    const clampedSample = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: "audio/wav" });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("loadend", () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    });
+    reader.addEventListener("error", () => reject(new Error("录音读取失败。")));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function calculatePeakLevel(samples) {
+  let peak = 0;
+
+  for (const sample of samples) {
+    peak = Math.max(peak, Math.abs(sample));
+  }
+
+  return peak;
+}
+
+function renderVoicePlayback(blob, { durationMs, peakLevel }) {
+  if (voicePlaybackUrl) {
+    URL.revokeObjectURL(voicePlaybackUrl);
+  }
+
+  voicePlaybackUrl = URL.createObjectURL(blob);
+
+  const label = document.createElement("p");
+  label.className = "voice-playback-label";
+  label.textContent = "本地录音回放";
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.src = voicePlaybackUrl;
+
+  const detail = document.createElement("p");
+  detail.className = "voice-playback-detail";
+  detail.textContent = `时长 ${(durationMs / 1000).toFixed(1)}s · 大小 ${(blob.size / 1024).toFixed(
+    1,
+  )}KB · 本地峰值 ${Math.round(peakLevel * 100)}%`;
+
+  const hint = document.createElement("p");
+  hint.className = "voice-playback-hint";
+  hint.textContent =
+    peakLevel < 0.02
+      ? "回放如果几乎没有声音，优先检查浏览器麦克风权限、系统输入设备和音量。"
+      : "若回放正常但识别超时，问题更可能在豆包任务处理、公网音频访问或轮询时间。";
+
+  voicePlayback.replaceChildren(label, audio, detail, hint);
+  voicePlayback.hidden = false;
+}
+
+function formatVoiceMetrics(metrics) {
+  const parts = [
+    `时长 ${metrics.durationSeconds}s`,
+    `语速 ${metrics.charsPerMinute} 字/分钟`,
+    `长停顿 ${metrics.longPauseCount} 次`,
+  ];
+
+  if (metrics.avgSpeechRate !== null && metrics.avgSpeechRate !== undefined) {
+    parts.push(`token 语速 ${metrics.avgSpeechRate}/s`);
+  }
+
+  if (metrics.avgVolume !== null && metrics.avgVolume !== undefined) {
+    parts.push(`音量 ${metrics.avgVolume} dB`);
+  }
+
+  return parts.join(" · ");
+}
+
+function renderVoiceFeedback(data) {
+  const summary = document.createElement("p");
+  summary.className = "voice-summary";
+  summary.textContent = data.feedback?.summary || "语音分析完成。";
+
+  const metrics = document.createElement("p");
+  metrics.className = "voice-metrics";
+  metrics.textContent = formatVoiceMetrics(data.metrics || {});
+
+  const list = document.createElement("ul");
+  for (const suggestion of data.feedback?.suggestions || []) {
+    const item = document.createElement("li");
+    item.textContent = suggestion;
+    list.append(item);
+  }
+
+  const children = [summary, metrics];
+
+  if (data.debug?.requestId || data.debug?.query?.logId || data.debug?.query?.statusCode) {
+    const debug = document.createElement("p");
+    debug.className = "voice-debug";
+    debug.textContent = [
+      data.debug?.requestId ? `requestId ${data.debug.requestId}` : "",
+      data.debug?.query?.statusCode ? `status ${data.debug.query.statusCode}` : "",
+      data.debug?.query?.message ? `message ${data.debug.query.message}` : "",
+      data.debug?.query?.logId ? `logid ${data.debug.query.logId}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    children.push(debug);
+  }
+
+  children.push(list);
+  voiceFeedback.replaceChildren(...children);
+  voiceFeedback.hidden = false;
+}
+
+async function startRecording() {
+  if (!window.isSecureContext) {
+    setVoiceStatus("浏览器禁止非 HTTPS 页面录音。请使用 HTTPS 域名访问，或在本机 localhost 调试。");
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setVoiceStatus("当前浏览器没有开放麦克风接口，请换用最新版 Chrome、Edge 或 Safari。");
+    return;
+  }
+
+  const BrowserAudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!BrowserAudioContext) {
+    setVoiceStatus("当前浏览器不支持 Web Audio 录音，请换用最新版 Chrome、Edge 或 Safari。");
+    return;
+  }
+
+  voiceFeedback.hidden = true;
+  voicePlayback.hidden = true;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  const context = new BrowserAudioContext();
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+
+  recorder = {
+    context,
+    source,
+    processor,
+    stream,
+    chunks: [],
+    sampleRate: context.sampleRate,
+    startedAt: performance.now(),
+    isRecording: true,
+  };
+
+  processor.onaudioprocess = (event) => {
+    if (!recorder.isRecording) {
+      return;
+    }
+
+    recorder.chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  };
+
+  source.connect(processor);
+  processor.connect(context.destination);
+  setVoiceStatus("正在录音，回答结束后点击停止并分析。");
+}
+
+function cleanupRecorder() {
+  recorder.processor?.disconnect();
+  recorder.source?.disconnect();
+  recorder.stream?.getTracks().forEach((track) => track.stop());
+  recorder.context?.close();
+}
+
+async function stopRecordingAndAnalyze() {
+  const durationMs = Math.max(0, performance.now() - recorder.startedAt);
+  recorder.isRecording = false;
+  setVoiceStatus("正在整理录音并提交分析...", true);
+  cleanupRecorder();
+
+  const rawSamples = flattenAudioChunks(recorder.chunks);
+  recorder.chunks = [];
+
+  if (durationMs < 800 || rawSamples.length < 8000) {
+    setVoiceStatus("录音太短，请至少回答 1 秒以上。");
+    return;
+  }
+
+  const targetSampleRate = 16000;
+  const samples = downsampleBuffer(rawSamples, recorder.sampleRate, targetSampleRate);
+  const wavBlob = encodeWav(samples, targetSampleRate);
+  renderVoicePlayback(wavBlob, { durationMs, peakLevel: calculatePeakLevel(samples) });
+  const audioBase64 = await blobToBase64(wavBlob);
+
+  setVoiceStatus("正在识别语音并生成表达反馈...", true);
+  const response = await fetch("/api/analyze-voice", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64,
+      mimeType: wavBlob.type,
+      durationMs,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const debugParts = [
+      data.debug?.statusCode ? `状态码 ${data.debug.statusCode}` : "",
+      data.debug?.message ? `消息 ${data.debug.message}` : "",
+      data.debug?.logId ? `logid ${data.debug.logId}` : "",
+    ].filter(Boolean);
+    throw new Error(`${data.error || "语音分析失败。"}${debugParts.length ? `（${debugParts.join("，")}）` : ""}`);
+  }
+
+  if (data.text) {
+    messageInput.value = data.text;
+    messageInput.focus();
+  }
+
+  renderVoiceFeedback(data);
+  setVoiceStatus(data.text ? "已转写到输入框，可修改后发送。" : "已完成分析，但没有识别到文本。");
+}
+
 hideTimerButton.addEventListener("click", () => {
   state.timerVisible = false;
   render();
@@ -582,6 +905,24 @@ hideTimerButton.addEventListener("click", () => {
 showTimerButton.addEventListener("click", () => {
   state.timerVisible = true;
   render();
+});
+
+recordButton.addEventListener("click", async () => {
+  if (isAnalyzingVoice || isSending) {
+    return;
+  }
+
+  try {
+    if (recorder.isRecording) {
+      await stopRecordingAndAnalyze();
+    } else {
+      await startRecording();
+    }
+  } catch (error) {
+    recorder.isRecording = false;
+    cleanupRecorder();
+    setVoiceStatus(`语音失败：${error.message}`);
+  }
 });
 
 messageInput.addEventListener("keydown", (event) => {
