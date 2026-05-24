@@ -989,7 +989,44 @@ async function handleResumeNextQuestion(request, response) {
 }
 
 const server = createServer((request, response) => {
-  if (request.method === "GET" && request.url === "/health") {
+  if (request.method === "GET" || request.method === "HEAD") {
+    const requestPath = new URL(request.url || "/", "http://127.0.0.1").pathname;
+
+    if (requestPath === "/" || requestPath === "/index.html") {
+      serveStaticFile(join(process.cwd(), "index.html"), "text/html; charset=utf-8", response);
+      return;
+    }
+
+    if (requestPath === "/styles.css") {
+      serveStaticFile(join(process.cwd(), "styles.css"), "text/css; charset=utf-8", response);
+      return;
+    }
+
+    if (requestPath === "/app.js") {
+      serveStaticFile(join(process.cwd(), "app.js"), "text/javascript; charset=utf-8", response);
+      return;
+    }
+
+    if (requestPath === "/vendor/pdfjs/pdf.min.mjs") {
+      serveStaticFile(
+        join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"),
+        "text/javascript; charset=utf-8",
+        response,
+      );
+      return;
+    }
+
+    if (requestPath === "/vendor/pdfjs/pdf.worker.min.mjs") {
+      serveStaticFile(
+        join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"),
+        "text/javascript; charset=utf-8",
+        response,
+      );
+      return;
+    }
+  }
+
+  if ((request.method === "GET" || request.method === "HEAD") && request.url === "/health") {
     response.writeHead(200, jsonHeaders);
     response.end(JSON.stringify({ ok: true }));
     return;
@@ -1023,6 +1060,23 @@ const server = createServer((request, response) => {
   response.writeHead(404, jsonHeaders);
   response.end(JSON.stringify({ error: "Not found" }));
 });
+
+async function serveStaticFile(filePath, contentType, response) {
+  try {
+    const fileContent = await readFile(filePath);
+    response.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store",
+    });
+    response.end(response.req?.method === "HEAD" ? undefined : fileContent);
+  } catch {
+    response.writeHead(404, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(JSON.stringify({ error: "Not found" }));
+  }
+}
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`OfferForge API listening on http://127.0.0.1:${port}`);
