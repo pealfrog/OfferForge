@@ -78,12 +78,11 @@ textarea:disabled {
   height: calc(100vh - 48px);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: 18px;
   overflow: hidden;
 }
 
-.side-panel,
 .chat-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -94,25 +93,41 @@ textarea:disabled {
 .side-panel {
   min-height: 0;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 18px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
 }
 
-.side-panel > header,
-.timer-zone {
-  flex: 0 0 auto;
-}
-
-.side-secondary {
+.side-card {
   min-height: 0;
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.title-card,
+.clear-card {
+  padding: 16px;
+}
+
+.training-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.training-card h2 {
+  padding: 14px 16px 10px;
+}
+
+.training-scroll {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 0 16px 16px;
 }
 
 .eyebrow {
@@ -179,30 +194,6 @@ textarea {
   line-height: 1.55;
 }
 
-.training-settings {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-soft);
-}
-
-.training-settings summary {
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  color: var(--accent);
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.training-settings .control-group {
-  padding: 0 12px 12px;
-}
-
-.training-settings .control-group + .control-group {
-  padding-top: 2px;
-}
-
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -214,7 +205,6 @@ textarea:focus-visible {
 .hint-list {
   display: grid;
   gap: 10px;
-  margin-top: auto;
 }
 
 .hint-list div {
@@ -319,9 +309,9 @@ button:hover:not(:disabled) {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   place-items: center;
-  gap: 10px;
-  padding: 18px;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  gap: 8px;
+  padding: 16px;
+  border: 0;
   border-radius: 8px;
   background:
     radial-gradient(circle at center, color-mix(in srgb, var(--accent-soft) 76%, transparent) 0 48%, transparent 49%),
@@ -351,8 +341,8 @@ button:hover:not(:disabled) {
 
 .stopwatch-ring {
   position: relative;
-  width: 42px;
-  height: 30px;
+  width: 38px;
+  height: 28px;
   margin-top: 2px;
 }
 
@@ -361,8 +351,8 @@ button:hover:not(:disabled) {
   position: absolute;
   left: 50%;
   top: 0;
-  width: 18px;
-  height: 10px;
+  width: 16px;
+  height: 9px;
   border: 3px solid var(--accent-strong);
   border-bottom: 0;
   border-radius: 6px 6px 0 0;
@@ -374,8 +364,8 @@ button:hover:not(:disabled) {
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 36px;
-  height: 22px;
+  width: 32px;
+  height: 20px;
   border: 3px solid var(--accent-strong);
   border-radius: 999px 999px 12px 12px;
   transform: translateX(-50%);
@@ -411,7 +401,7 @@ button:hover:not(:disabled) {
 .timer-value {
   align-self: center;
   color: var(--accent-strong);
-  font-size: clamp(2rem, 3.1vw, 2.8rem);
+  font-size: clamp(1.78rem, 2.6vw, 2.35rem);
   font-weight: 900;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -429,16 +419,22 @@ button:hover:not(:disabled) {
 
 .timer-zone {
   width: 100%;
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  overflow: hidden;
+}
+
+.timer-zone:has(.timer-panel[hidden]) {
+  padding: 10px;
 }
 
 .timer-restore {
   width: 100%;
-  aspect-ratio: 1;
+  min-height: 42px;
   border: 1px dashed color-mix(in srgb, var(--accent) 58%, var(--line));
   border-radius: 8px;
   color: var(--accent-strong);
   background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 900;
 }
 
@@ -518,7 +514,9 @@ button:hover:not(:disabled) {
   }
 
   .side-panel {
-    gap: 14px;
+    min-height: 720px;
+    grid-template-rows: auto auto minmax(240px, 1fr) auto;
+    gap: 12px;
   }
 
   .hint-list {
