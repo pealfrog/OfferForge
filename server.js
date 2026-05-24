@@ -48,6 +48,37 @@ function pickRandom(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+function clampIndex(value, length) {
+  if (!length) {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(length - 1, Math.floor(numeric)));
+}
+
+function normalizeSections(resume) {
+  return Array.isArray(resume?.sections)
+    ? resume.sections.map((section) => String(section || "").trim()).filter(Boolean)
+    : [];
+}
+
+const resumeQuestionAngles = [
+  "基础掌握与理解",
+  "具体实践细节",
+  "为什么选择这一门课或这段经历",
+  "遇到的难点与解决方式",
+  "学到的结果与反思",
+];
+
+function pickResumeAngle() {
+  return pickRandom(resumeQuestionAngles);
+}
+
 function buildSystemPrompt({ trainingMode, context, resume, followup }) {
   const followupCount = Number(followup?.count || 0);
   const maxFollowups = Number(followup?.maxCount || 4);
@@ -81,6 +112,50 @@ function buildSystemPrompt({ trainingMode, context, resume, followup }) {
   );
 
   return prompt.join("\n");
+}
+
+function buildResumeScanPrompt({ candidate, context, trainingMode }) {
+  return [
+    "你是简历扫描助手。你的任务是判断当前简历条目是否值得面试官提问。",
+    "你只能输出 JSON，格式为：{\"shouldAsk\":true或false,\"reply\":\"如果 shouldAsk 为 true，则给出一条简短的面试问题；如果为 false，则 reply 为空字符串\"}",
+    "判断标准：如果这一段有信息量、职责、方法、结果、时间、角色、量化成果、技术选择、论文/实习/项目细节，就值得提问；如果只是基础信息、过短或重复，就跳过。",
+    `当前基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
+    `当前模式：${trainingMode}`,
+    `当前简历段落：${candidate}`,
+    "如果值得提问，问题应自然聚焦在这一段，不要泛泛而谈。",
+    "如果不值得提问，shouldAsk 设为 false，reply 留空。",
+  ].join("\n");
+}
+
+function buildResumeQuestionPrompt({ section, context, angleHint }) {
+  return [
+    "你是简历面试官，正在针对这一段简历生成第一问。",
+    "你必须只输出 JSON，格式为：{\"mode\":\"new_question\",\"reply\":\"要展示给用户的问题文本\"}",
+    `提问角度：${angleHint}`,
+    `基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
+    `当前简历段落：${section}`,
+    "问题应自然聚焦在这一段，避免泛泛而谈。",
+    "请用中文，保持简短，最多一句问题。",
+  ].join("\n");
+}
+
+function buildResumeFollowupPrompt({ section, context, followup, angleHint }) {
+  const followupCount = Number(followup?.count || 0);
+  const maxFollowups = Number(followup?.maxCount || 4);
+
+  return [
+    "你是简历面试官，正在围绕同一条简历内容做追问。",
+    "你必须只输出 JSON，格式为：{\"mode\":\"follow_up 或 new_question\",\"reply\":\"要展示给用户的问题文本\"}",
+    "如果还有深挖空间，请使用 follow_up；如果这部分已经问得足够，或者应该转向下一段简历，请使用 new_question。",
+    "follow_up 时，只围绕当前段继续追问，不要切换到别的简历段。",
+    "new_question 时，只表示该段告一段落，不要在 reply 里解释为什么跳转。",
+    `基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
+    `当前连续追问次数：${followupCount}，追问上限：${maxFollowups}。`,
+    `当前追问角度：${angleHint}`,
+    `当前简历段落：${section}`,
+    "问题应尽量具体，围绕经历细节、技术选择、取舍、结果、反思或量化成果。",
+    "请用中文，保持简短，最多一句问题。",
+  ].join("\n");
 }
 
 function validateMessages(messages) {
@@ -229,6 +304,20 @@ function parseInterviewReply(rawReply) {
   }
 }
 
+function parseResumeDecision(rawReply) {
+  const fallback = { shouldAsk: true, reply: rawReply };
+
+  try {
+    const jsonText = rawReply.match(/\{[\s\S]*\}/)?.[0] || rawReply;
+    const parsed = JSON.parse(jsonText);
+    const shouldAsk = parsed.shouldAsk !== false;
+    const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
+    return { shouldAsk, reply };
+  } catch {
+    return fallback;
+  }
+}
+
 async function handleFormatResume(request, response) {
   try {
     const body = await readJson(request);
@@ -270,6 +359,121 @@ async function handleFormatResume(request, response) {
   }
 }
 
+async function handleResumeNextQuestion(request, response) {
+  try {
+    const body = await readJson(request);
+    const trainingMode = body.trainingMode || "resume";
+    const resume = body.resume || {};
+    const followup = body.followup || {};
+    const messages = validateMessages(body.messages);
+    const previousCount = Math.max(0, Number(followup.count || 0));
+    const maxCount = Math.max(1, Number(followup.maxCount || 4));
+    const sections = normalizeSections(resume);
+    const cursor = clampIndex(resume.cursor, sections.length) ?? 0;
+    const activeIndex = clampIndex(resume.activeIndex, sections.length);
+    const advanceToNext = Boolean(resume.advanceToNext);
+
+    if (!sections.length) {
+      response.writeHead(400, jsonHeaders);
+      response.end(JSON.stringify({ error: "请先上传简历。" }));
+      return;
+    }
+
+    const askableCandidates = [];
+    if (activeIndex !== null && !advanceToNext && previousCount < maxCount && messages.length) {
+      const currentSection = sections[activeIndex];
+      const angleHint = pickResumeAngle();
+      const rawFollowup = await callQianwen(
+        [
+          {
+            role: "system",
+            content: buildResumeFollowupPrompt({ section: currentSection, context: body.context, followup, angleHint }),
+          },
+          ...messages,
+        ],
+        { temperature: 0.45 },
+      );
+      const parsedFollowup = parseInterviewReply(rawFollowup);
+
+      if (parsedFollowup.mode === "follow_up" && parsedFollowup.reply) {
+        response.writeHead(200, jsonHeaders);
+        response.end(
+          JSON.stringify({
+            reply: parsedFollowup.reply,
+            followup: { mode: "follow_up", count: previousCount + 1, maxCount },
+            resume: {
+              cursor: Math.max(cursor, activeIndex + 1),
+              activeIndex,
+              activeSection: currentSection,
+            },
+          }),
+        );
+        return;
+      }
+    }
+
+    const scanStart = activeIndex !== null ? Math.max(cursor, activeIndex + 1) : cursor;
+
+    for (let index = scanStart; index < sections.length; index += 1) {
+      const candidate = sections[index];
+      const rawDecision = await callQianwen(
+        [{ role: "system", content: buildResumeScanPrompt({ candidate, context: body.context, trainingMode }) }],
+        { temperature: 0.2 },
+      );
+      const parsedDecision = parseResumeDecision(rawDecision);
+
+      if (parsedDecision.shouldAsk) {
+        askableCandidates.push({ index, candidate });
+      }
+
+      if (askableCandidates.length >= 4) {
+        break;
+      }
+    }
+
+    if (!askableCandidates.length) {
+      response.writeHead(200, jsonHeaders);
+      response.end(
+        JSON.stringify({
+          reply: "我已经浏览完这份简历，没有继续追问的点了。",
+          followup: { mode: "new_question", count: 0, maxCount },
+          resume: { cursor: sections.length, activeIndex: null },
+        }),
+      );
+      return;
+    }
+
+    const chosenSection = pickRandom(askableCandidates);
+    const angleHint = pickResumeAngle();
+    const rawQuestion = await callQianwen(
+      [
+        {
+          role: "system",
+          content: buildResumeQuestionPrompt({
+            section: chosenSection.candidate,
+            context: body.context,
+            angleHint,
+          }),
+        },
+      ],
+      { temperature: 0.55 },
+    );
+    const parsedQuestion = parseInterviewReply(rawQuestion);
+
+    response.writeHead(200, jsonHeaders);
+    response.end(
+      JSON.stringify({
+        reply: parsedQuestion.reply || "这一段经历能具体展开一下吗？",
+        followup: { mode: "new_question", count: 0, maxCount },
+        resume: { cursor: chosenSection.index + 1, activeIndex: chosenSection.index, activeSection: chosenSection.candidate },
+      }),
+    );
+  } catch (error) {
+    response.writeHead(error.status || 500, jsonHeaders);
+    response.end(JSON.stringify({ error: error.message || "简历追问生成失败。" }));
+  }
+}
+
 const server = createServer((request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     response.writeHead(200, jsonHeaders);
@@ -284,6 +488,11 @@ const server = createServer((request, response) => {
 
   if (request.method === "POST" && request.url === "/api/format-resume") {
     handleFormatResume(request, response);
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/resume-next-question") {
+    handleResumeNextQuestion(request, response);
     return;
   }
 

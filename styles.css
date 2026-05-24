@@ -629,6 +629,8 @@ button:hover:not(:disabled) {
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  user-select: text;
+  cursor: default;
 }
 
 .resume-section[data-active="true"] {

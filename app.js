@@ -16,7 +16,6 @@ const clearResumeButton = document.querySelector("#clearResumeButton");
 const resumePanel = document.querySelector("#resumePanel");
 const resumeHint = document.querySelector("#resumeHint");
 const resumeViewer = document.querySelector("#resumeViewer");
-const clearHighlightButton = document.querySelector("#clearHighlightButton");
 const followupState = document.querySelector("#followupState");
 const followupLabel = document.querySelector("#followupLabel");
 const followupCount = document.querySelector("#followupCount");
@@ -37,6 +36,7 @@ const storageKey = "offerforge-chat-state";
 let state = loadState();
 let isSending = false;
 let isFormattingResume = false;
+let resumeSectionsSignature = "";
 let timer = {
   phase: "idle",
   durationMs: 0,
@@ -53,6 +53,7 @@ function loadState() {
     timerVisible: true,
     followupCount: 0,
     followupMode: "new_question",
+    resumeCursor: 0,
     resumeName: "",
     resumeText: "",
     resumeSections: [],
@@ -104,17 +105,26 @@ function renderResume() {
     return;
   }
 
-  resumeStatus.textContent = state.resumeName ? `已整理：${state.resumeName}` : "请选择文字版 PDF 简历。";
-  resumeHint.textContent = state.activeResumeSection
-    ? "当前高亮片段会随下一轮对话发送给面试官。"
-    : "点击一段简历内容，标记面试官正在追问的部分。";
+  if (!isFormattingResume) {
+    resumeStatus.textContent = state.resumeName ? `已整理：${state.resumeName}` : "请选择文字版 PDF 简历。";
+  }
+  renderResumeHint();
 
-  if (!state.resumeSections.length) {
-    resumeViewer.replaceChildren(createEmptyResume());
-    return;
+  const signature = state.resumeSections.join("\u0000");
+  if (signature !== resumeSectionsSignature) {
+    resumeSectionsSignature = signature;
+    if (!state.resumeSections.length) {
+      resumeViewer.replaceChildren(createEmptyResume());
+    } else {
+      resumeViewer.replaceChildren(...state.resumeSections.map(createResumeSection));
+    }
   }
 
-  resumeViewer.replaceChildren(...state.resumeSections.map(createResumeSection));
+  updateResumeHighlight();
+  if (state.activeResumeSection !== null) {
+    const activeNode = resumeViewer.querySelector(`.resume-section[data-index="${state.activeResumeSection}"]`);
+    activeNode?.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function setResumeStatus(text, loading = false) {
@@ -131,30 +141,29 @@ function createEmptyResume() {
 }
 
 function createResumeSection(section, index) {
-  const button = document.createElement("button");
-  button.className = "resume-section";
-  button.type = "button";
-  button.dataset.active = String(state.activeResumeSection === index);
-  button.textContent = section;
-  button.addEventListener("click", () => {
-    state.activeResumeSection = state.activeResumeSection === index ? null : index;
-    updateResumeHighlight();
-    renderResumeHint();
-    saveState();
-  });
-  return button;
+  const item = document.createElement("div");
+  item.className = "resume-section";
+  item.dataset.index = String(index);
+  item.dataset.active = String(state.activeResumeSection === index);
+  item.textContent = section;
+  return item;
 }
 
 function updateResumeHighlight() {
-  resumeViewer.querySelectorAll(".resume-section").forEach((sectionButton, index) => {
-    sectionButton.dataset.active = String(state.activeResumeSection === index);
+  resumeViewer.querySelectorAll(".resume-section").forEach((sectionButton) => {
+    sectionButton.dataset.active = String(
+      Number(sectionButton.dataset.index) === state.activeResumeSection,
+    );
   });
 }
 
 function renderResumeHint() {
-  resumeHint.textContent = state.activeResumeSection
-    ? "当前高亮片段会随下一轮对话发送给面试官。"
-    : "点击一段简历内容，标记面试官正在追问的部分。";
+  resumeHint.textContent =
+    state.activeResumeSection !== null
+      ? "Agent 正在围绕这段简历进行提问和追问。"
+      : state.resumeSections.length
+        ? "Agent 会从上到下扫描简历，只挑出有提问价值的部分。"
+        : "选择“针对简历”后上传文字版 PDF。";
 }
 
 function createMessage(message) {
@@ -175,7 +184,14 @@ function createMessage(message) {
 function renderFollowupState() {
   const active = state.followupMode === "follow_up";
   followupState.dataset.active = String(active);
-  followupLabel.textContent = active ? "追问中" : "题库首问";
+  followupLabel.textContent =
+    state.trainingMode === "resume"
+      ? active
+        ? "简历追问"
+        : "简历首问"
+      : active
+        ? "追问中"
+        : "题库首问";
   followupCount.textContent = `${Math.min(state.followupCount, 4)} / 4`;
 }
 
@@ -291,11 +307,27 @@ function buildPayload() {
     resume: {
       name: state.resumeName,
       text: state.resumeText.slice(0, 12000),
+      sections: state.resumeSections,
+      cursor: state.resumeCursor,
+      activeIndex: state.activeResumeSection,
+      advanceToNext: false,
       activeSection:
         typeof state.activeResumeSection === "number" ? state.resumeSections[state.activeResumeSection] : "",
     },
     messages: state.messages.filter((message) => ["user", "assistant"].includes(message.role)).slice(-12),
   };
+}
+
+function applyResumeResponse(data) {
+  if (!data?.resume) {
+    return;
+  }
+
+  state.resumeCursor = Math.max(0, Number(data.resume.cursor ?? state.resumeCursor));
+  state.activeResumeSection =
+    data.resume.activeIndex === null || data.resume.activeIndex === undefined
+      ? null
+      : Number(data.resume.activeIndex);
 }
 
 async function sendMessage(text) {
@@ -305,10 +337,16 @@ async function sendMessage(text) {
   setSending(true);
 
   try {
-    const response = await fetch("/api/chat", {
+    const endpoint = state.trainingMode === "resume" ? "/api/resume-next-question" : "/api/chat";
+    const payload = buildPayload();
+    if (state.trainingMode === "resume") {
+      payload.resume.advanceToNext = false;
+    }
+
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildPayload()),
+      body: JSON.stringify(payload),
     });
 
     const data = await response.json().catch(() => ({}));
@@ -320,7 +358,12 @@ async function sendMessage(text) {
     state.messages.push({ role: "assistant", content: data.reply || "我没有收到有效回复，请再试一次。" });
     state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
     state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
-    startPrepTimer();
+    applyResumeResponse(data);
+    if (state.trainingMode === "resume" && state.activeResumeSection === null) {
+      stopTimer();
+    } else {
+      startPrepTimer();
+    }
   } catch (error) {
     state.messages.push({
       role: "assistant",
@@ -343,6 +386,8 @@ function resetConversation() {
   state.messages = [];
   state.followupMode = "new_question";
   state.followupCount = 0;
+  state.resumeCursor = 0;
+  state.activeResumeSection = null;
   stopTimer();
 }
 
@@ -355,12 +400,14 @@ clearButton.addEventListener("click", () => {
 trainingModeSelect.addEventListener("change", () => {
   state.trainingMode = trainingModeSelect.value;
   resetConversation();
-  if (state.trainingMode !== "resume") {
-    state.activeResumeSection = null;
-    renderResumeHint();
-  }
   render();
-  requestOpeningQuestion();
+  if (state.trainingMode === "resume") {
+    if (state.resumeSections.length) {
+      requestResumeQuestion();
+    }
+  } else {
+    requestOpeningQuestion();
+  }
 });
 
 prepSecondsInput.addEventListener("input", () => {
@@ -399,9 +446,14 @@ confirmResumeUploadButton.addEventListener("click", async () => {
     state.resumeName = file.name;
     state.resumeText = formattedText;
     state.resumeSections = sections;
+    state.resumeCursor = 0;
     state.activeResumeSection = null;
+    state.followupMode = "new_question";
+    state.followupCount = 0;
+    state.messages = [];
     isFormattingResume = false;
     render();
+    requestResumeQuestion();
   } catch (error) {
     setResumeStatus(`解析失败：${error.message}`);
   } finally {
@@ -412,22 +464,15 @@ confirmResumeUploadButton.addEventListener("click", async () => {
   }
 });
 
-clearHighlightButton.addEventListener("click", () => {
-  state.activeResumeSection = null;
-  render();
-});
-
 clearResumeButton.addEventListener("click", () => {
+  resetConversation();
   state.resumeName = "";
   state.resumeText = "";
   state.resumeSections = [];
   state.activeResumeSection = null;
-  state.followupMode = "new_question";
-  state.followupCount = 0;
   resumeUpload.value = "";
   setResumeStatus("请选择文字版 PDF 简历。");
   resumeViewer.replaceChildren(createEmptyResume());
-  resumeHint.textContent = "点击一段简历内容，标记面试官正在追问的部分。";
   render();
 });
 
@@ -435,6 +480,11 @@ stopFollowupButton.addEventListener("click", () => {
   state.followupMode = "new_question";
   state.followupCount = 0;
   render();
+  if (state.trainingMode === "resume") {
+    requestResumeQuestion({ append: true, advanceToNext: true });
+    return;
+  }
+
   requestOpeningQuestion({ append: true, force: true });
 });
 
@@ -559,11 +609,23 @@ chatForm.addEventListener("submit", (event) => {
 });
 
 async function requestOpeningQuestion({ append = false, force = false } = {}) {
+  if (state.trainingMode === "resume") {
+    if (!state.resumeSections.length) {
+      connectionStatus.textContent = "请先上传简历后开始第一题。";
+      render();
+      return;
+    }
+
+    await requestResumeQuestion({ append, force });
+    return;
+  }
+
   if (state.messages.length && !force && !append) {
     render();
     return;
   }
 
+  stopTimer();
   setSending(true);
   connectionStatus.textContent = "正在生成开场问题...";
 
@@ -583,6 +645,7 @@ async function requestOpeningQuestion({ append = false, force = false } = {}) {
     state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
     state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
     state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
+    startPrepTimer();
   } catch {
     const openingMessage = { role: "assistant", content: "请简单做一个自我介绍。" };
     state.messages = append && state.messages.length ? [...state.messages, openingMessage] : [openingMessage];
@@ -592,5 +655,61 @@ async function requestOpeningQuestion({ append = false, force = false } = {}) {
   }
 }
 
+async function requestResumeQuestion({ append = false, advanceToNext = false } = {}) {
+  if (!state.resumeSections.length) {
+    connectionStatus.textContent = "请先上传简历后开始第一题。";
+    render();
+    return;
+  }
+
+  stopTimer();
+  setSending(true);
+  connectionStatus.textContent = "正在扫描简历并生成问题...";
+
+  try {
+    const payload = buildPayload();
+    payload.resume.advanceToNext = advanceToNext;
+
+    const response = await fetch("/api/resume-next-question", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "简历问题生成失败。");
+    }
+
+    const assistantMessage = { role: "assistant", content: data.reply || "这一段经历能具体展开一下吗？" };
+    state.messages = append && state.messages.length ? [...state.messages, assistantMessage] : [assistantMessage];
+    state.followupMode = data.followup?.mode === "follow_up" ? "follow_up" : "new_question";
+    state.followupCount = Math.max(0, Math.min(4, Number(data.followup?.count ?? 0)));
+    applyResumeResponse(data);
+
+    if (state.activeResumeSection !== null) {
+      startPrepTimer();
+    } else {
+      stopTimer();
+    }
+  } catch (error) {
+    state.messages.push({
+      role: "assistant",
+      content: `请求失败：${error.message}`,
+    });
+    stopTimer();
+  } finally {
+    setSending(false);
+    render();
+    messageInput.focus();
+  }
+}
+
 render();
-requestOpeningQuestion();
+if (state.trainingMode === "resume") {
+  if (state.resumeSections.length && !state.messages.length) {
+    requestResumeQuestion();
+  }
+} else {
+  requestOpeningQuestion();
+}
