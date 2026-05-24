@@ -33,6 +33,28 @@
             <h2>训练配置</h2>
             <div class="training-scroll">
               <div class="control-group">
+                <label for="trainingModeSelect">训练方向</label>
+                <select id="trainingModeSelect">
+                  <option value="general">通用型面试问题</option>
+                  <option value="resume">针对简历的提问和追问</option>
+                </select>
+              </div>
+
+              <section class="resume-config" id="resumeConfig" hidden>
+                <div class="control-group">
+                  <label for="resumeUpload">上传简历</label>
+                  <div class="upload-row">
+                    <input id="resumeUpload" type="file" accept="application/pdf" />
+                    <button class="small-button" id="confirmResumeUploadButton" type="button">确认上传</button>
+                  </div>
+                </div>
+                <div class="resume-status-row">
+                  <p class="config-note" id="resumeStatus">请选择文字版 PDF 简历。</p>
+                  <button class="small-button clear-resume-button" id="clearResumeButton" type="button" hidden>清空</button>
+                </div>
+              </section>
+
+              <div class="control-group">
                 <label for="scenarioSelect">面试场景</label>
                 <select id="scenarioSelect">
                   <option value="保研面试">保研面试</option>
@@ -56,6 +78,7 @@
                 <label for="prepSecondsInput">准备时间（秒）</label>
                 <input id="prepSecondsInput" type="number" min="0" max="60" step="1" value="5" />
               </div>
+
               <div class="hint-list" aria-label="训练要点">
                 <div>
                   <strong>当前能力</strong>
@@ -74,32 +97,49 @@
           </section>
         </aside>
 
-        <section class="chat-panel" aria-label="AI 对话区">
-          <header class="chat-header">
-            <div>
-              <h2>模拟面试官</h2>
-              <p id="connectionStatus">已连接本地代理，等待开始。</p>
+        <section class="main-panel" aria-label="训练工作区">
+          <section class="chat-panel" aria-label="AI 对话区">
+            <header class="chat-header">
+              <div>
+                <h2>模拟面试官</h2>
+                <p id="connectionStatus">已连接本地代理，等待开始。</p>
+              </div>
+              <button class="icon-button" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
+                <span id="themeIcon">☾</span>
+              </button>
+            </header>
+
+            <div class="messages" id="messages" aria-live="polite"></div>
+
+            <form class="composer" id="chatForm">
+              <textarea
+                id="messageInput"
+                rows="3"
+                placeholder="输入你的回答或请求，例如：请先问我一个关于项目经历的问题。"
+                autocomplete="off"
+              ></textarea>
+              <button class="primary-button" id="sendButton" type="submit">发送</button>
+            </form>
+          </section>
+
+          <section class="resume-panel" id="resumePanel" aria-label="简历内容" hidden>
+            <header class="resume-header">
+              <div>
+                <h2>简历材料</h2>
+                <p id="resumeHint">选择“针对简历”后上传文字版 PDF。</p>
+              </div>
+              <div class="resume-actions">
+                <button class="small-button" id="clearHighlightButton" type="button">清除高亮</button>
+              </div>
+            </header>
+            <div class="resume-viewer" id="resumeViewer">
+              <div class="resume-empty">暂无简历内容</div>
             </div>
-            <button class="icon-button" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
-              <span id="themeIcon">☾</span>
-            </button>
-          </header>
-
-          <div class="messages" id="messages" aria-live="polite"></div>
-
-          <form class="composer" id="chatForm">
-            <textarea
-              id="messageInput"
-              rows="3"
-              placeholder="输入你的回答或请求，例如：请先问我一个关于项目经历的问题。"
-              autocomplete="off"
-            ></textarea>
-            <button class="primary-button" id="sendButton" type="submit">发送</button>
-          </form>
+          </section>
         </section>
       </section>
     </main>
 
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
