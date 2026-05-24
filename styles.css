@@ -9,7 +9,9 @@
   --accent: #0b7f77;
   --accent-strong: #075f59;
   --accent-soft: #dff3ef;
-  --danger: #b95047;
+  --prep: #b7791f;
+  --prep-strong: #8a570d;
+  --prep-soft: #fff1cc;
   --shadow: 0 22px 70px rgba(35, 49, 61, 0.15);
 }
 
@@ -24,7 +26,9 @@
   --accent: #42b8a8;
   --accent-strong: #78d5c8;
   --accent-soft: #163a38;
-  --danger: #ef8276;
+  --prep: #f0b84f;
+  --prep-strong: #ffd48a;
+  --prep-soft: #3a2c14;
   --shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
 }
 
@@ -33,8 +37,9 @@
 }
 
 body {
-  min-height: 100vh;
+  height: 100vh;
   margin: 0;
+  overflow: hidden;
   color: var(--text);
   background:
     linear-gradient(135deg, rgba(11, 127, 119, 0.12), transparent 30%),
@@ -63,17 +68,19 @@ textarea:disabled {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   padding: 24px;
+  overflow: hidden;
 }
 
 .workspace {
   width: min(1180px, 100%);
-  min-height: calc(100vh - 48px);
+  height: calc(100vh - 48px);
   margin: 0 auto;
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
   gap: 18px;
+  overflow: hidden;
 }
 
 .side-panel,
@@ -85,10 +92,27 @@ textarea:disabled {
 }
 
 .side-panel {
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 22px;
+  gap: 16px;
+  padding: 18px;
+}
+
+.side-panel > header,
+.timer-zone {
+  flex: 0 0 auto;
+}
+
+.side-secondary {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .eyebrow {
@@ -155,6 +179,30 @@ textarea {
   line-height: 1.55;
 }
 
+.training-settings {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.training-settings summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--accent);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-settings .control-group {
+  padding: 0 12px 12px;
+}
+
+.training-settings .control-group + .control-group {
+  padding-top: 2px;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -212,7 +260,8 @@ textarea:focus-visible {
 
 .icon-button,
 .primary-button,
-.ghost-button {
+.ghost-button,
+.small-button {
   min-height: 42px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -250,12 +299,156 @@ textarea:focus-visible {
   font-weight: 750;
 }
 
+.small-button {
+  min-height: 36px;
+  padding: 0 12px;
+  color: var(--text);
+  background: var(--surface-soft);
+  border-color: var(--line);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
 button:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
+.timer-panel {
+  width: 100%;
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  place-items: center;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--accent-soft) 76%, transparent) 0 48%, transparent 49%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 90%, transparent), var(--surface-soft));
+  box-shadow:
+    0 18px 42px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.timer-panel[hidden] {
+  display: none;
+}
+
+.timer-panel[data-phase="answering"] {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+}
+
+.timer-panel[data-phase="preparing"] {
+  border-color: color-mix(in srgb, var(--prep) 58%, var(--line));
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--prep-soft) 80%, transparent) 0 48%, transparent 49%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 90%, transparent), var(--surface-soft));
+  box-shadow:
+    0 18px 42px color-mix(in srgb, var(--prep) 24%, transparent),
+    inset 0 0 0 8px color-mix(in srgb, var(--prep) 12%, transparent);
+}
+
+.stopwatch-ring {
+  position: relative;
+  width: 42px;
+  height: 30px;
+  margin-top: 2px;
+}
+
+.stopwatch-ring::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 18px;
+  height: 10px;
+  border: 3px solid var(--accent-strong);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  transform: translateX(-50%);
+}
+
+.stopwatch-ring::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 36px;
+  height: 22px;
+  border: 3px solid var(--accent-strong);
+  border-radius: 999px 999px 12px 12px;
+  transform: translateX(-50%);
+}
+
+.stopwatch-ring span {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 3px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  transform: translateX(-50%) rotate(35deg);
+  transform-origin: bottom center;
+}
+
+.timer-panel[data-phase="preparing"] .stopwatch-ring::before,
+.timer-panel[data-phase="preparing"] .stopwatch-ring::after {
+  border-color: var(--prep-strong);
+}
+
+.timer-panel[data-phase="preparing"] .stopwatch-ring span {
+  background: var(--prep-strong);
+}
+
+.timer-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.timer-value {
+  align-self: center;
+  color: var(--accent-strong);
+  font-size: clamp(2rem, 3.1vw, 2.8rem);
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timer-panel[data-phase="preparing"] .timer-value {
+  color: var(--prep-strong);
+}
+
+.timer-actions {
+  width: 100%;
+  display: block;
+}
+
+.timer-zone {
+  width: 100%;
+}
+
+.timer-restore {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px dashed color-mix(in srgb, var(--accent) 58%, var(--line));
+  border-radius: 8px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.timer-restore[hidden] {
+  display: none;
+}
+
 .messages {
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -319,8 +512,9 @@ button:hover:not(:disabled) {
   }
 
   .workspace {
-    min-height: calc(100vh - 28px);
+    height: calc(100vh - 28px);
     grid-template-columns: 1fr;
+    overflow-y: auto;
   }
 
   .side-panel {
@@ -332,7 +526,8 @@ button:hover:not(:disabled) {
   }
 
   .chat-panel {
-    min-height: 620px;
+    min-height: 0;
+    height: min(640px, calc(100vh - 28px));
   }
 }
 

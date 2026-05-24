@@ -5,7 +5,13 @@ const clearButton = document.querySelector("#clearButton");
 const scenarioSelect = document.querySelector("#scenarioSelect");
 const roleInput = document.querySelector("#roleInput");
 const profileInput = document.querySelector("#profileInput");
+const prepSecondsInput = document.querySelector("#prepSecondsInput");
 const connectionStatus = document.querySelector("#connectionStatus");
+const timerPanel = document.querySelector("#timerPanel");
+const timerPhase = document.querySelector("#timerPhase");
+const timerValue = document.querySelector("#timerValue");
+const hideTimerButton = document.querySelector("#hideTimerButton");
+const showTimerButton = document.querySelector("#showTimerButton");
 const messagesEl = document.querySelector("#messages");
 const chatForm = document.querySelector("#chatForm");
 const messageInput = document.querySelector("#messageInput");
@@ -20,6 +26,12 @@ const welcomeMessage = {
 
 let state = loadState();
 let isSending = false;
+let timer = {
+  phase: "idle",
+  durationMs: 0,
+  startedAt: 0,
+  intervalId: null,
+};
 
 function loadState() {
   const saved = localStorage.getItem(storageKey);
@@ -28,6 +40,8 @@ function loadState() {
     scenario: "保研面试",
     role: "计算机专业大三学生",
     profile: "",
+    prepSeconds: 5,
+    timerVisible: true,
     messages: [welcomeMessage],
   };
 
@@ -57,8 +71,12 @@ function render() {
   scenarioSelect.value = state.scenario;
   roleInput.value = state.role;
   profileInput.value = state.profile;
+  prepSecondsInput.value = state.prepSeconds;
+  timerPanel.hidden = !state.timerVisible;
+  showTimerButton.hidden = state.timerVisible;
   messagesEl.replaceChildren(...state.messages.map(createMessage));
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  renderTimer();
   saveState();
 }
 
@@ -84,6 +102,96 @@ function setSending(nextValue) {
   connectionStatus.textContent = nextValue ? "AI 正在生成回复..." : "已连接本地代理，可以继续对话。";
 }
 
+function formatMilliseconds(totalMs) {
+  const safeMs = Math.max(0, Math.floor(totalMs));
+  const minutes = String(Math.floor(safeMs / 60000)).padStart(2, "0");
+  const seconds = String(Math.floor((safeMs % 60000) / 1000)).padStart(2, "0");
+  const milliseconds = String(safeMs % 1000).padStart(3, "0");
+  return `${minutes}:${seconds}.${milliseconds}`;
+}
+
+function currentTimerMs() {
+  if (timer.phase === "preparing") {
+    return timer.durationMs - (performance.now() - timer.startedAt);
+  }
+
+  if (timer.phase === "answering") {
+    return performance.now() - timer.startedAt;
+  }
+
+  return 0;
+}
+
+function renderTimer() {
+  const labels = {
+    idle: "等待问题",
+    preparing: "准备中",
+    answering: "正式作答",
+  };
+
+  timerPhase.textContent = labels[timer.phase];
+  timerValue.textContent = formatMilliseconds(currentTimerMs());
+  timerPanel.dataset.phase = timer.phase;
+}
+
+function stopTimer(nextPhase = "idle") {
+  if (timer.intervalId) {
+    clearInterval(timer.intervalId);
+  }
+
+  timer = {
+    phase: nextPhase,
+    durationMs: 0,
+    startedAt: 0,
+    intervalId: null,
+  };
+  renderTimer();
+}
+
+function startAnswerTimer() {
+  if (timer.intervalId) {
+    clearInterval(timer.intervalId);
+  }
+
+  timer = {
+    phase: "answering",
+    durationMs: 0,
+    startedAt: performance.now(),
+    intervalId: window.setInterval(() => {
+      renderTimer();
+    }, 33),
+  };
+  renderTimer();
+}
+
+function startPrepTimer() {
+  const prepSeconds = Math.max(0, Math.min(60, Number(state.prepSeconds) || 0));
+
+  if (prepSeconds === 0) {
+    startAnswerTimer();
+    return;
+  }
+
+  if (timer.intervalId) {
+    clearInterval(timer.intervalId);
+  }
+
+  timer = {
+    phase: "preparing",
+    durationMs: prepSeconds * 1000,
+    startedAt: performance.now(),
+    intervalId: window.setInterval(() => {
+      if (currentTimerMs() <= 0) {
+        startAnswerTimer();
+        return;
+      }
+
+      renderTimer();
+    }, 33),
+  };
+  renderTimer();
+}
+
 function buildPayload() {
   return {
     scenario: state.scenario,
@@ -94,6 +202,7 @@ function buildPayload() {
 }
 
 async function sendMessage(text) {
+  stopTimer();
   state.messages.push({ role: "user", content: text });
   render();
   setSending(true);
@@ -112,11 +221,13 @@ async function sendMessage(text) {
     }
 
     state.messages.push({ role: "assistant", content: data.reply || "我没有收到有效回复，请再试一次。" });
+    startPrepTimer();
   } catch (error) {
     state.messages.push({
       role: "assistant",
       content: `请求失败：${error.message}`,
     });
+    stopTimer();
   } finally {
     setSending(false);
     render();
@@ -131,6 +242,7 @@ themeToggle.addEventListener("click", () => {
 
 clearButton.addEventListener("click", () => {
   state.messages = [welcomeMessage];
+  stopTimer();
   render();
 });
 
@@ -147,6 +259,22 @@ roleInput.addEventListener("input", () => {
 profileInput.addEventListener("input", () => {
   state.profile = profileInput.value.trim();
   saveState();
+});
+
+prepSecondsInput.addEventListener("input", () => {
+  const nextValue = Math.max(0, Math.min(60, Number(prepSecondsInput.value) || 0));
+  state.prepSeconds = nextValue;
+  saveState();
+});
+
+hideTimerButton.addEventListener("click", () => {
+  state.timerVisible = false;
+  render();
+});
+
+showTimerButton.addEventListener("click", () => {
+  state.timerVisible = true;
+  render();
 });
 
 messageInput.addEventListener("keydown", (event) => {
