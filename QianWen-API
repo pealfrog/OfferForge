@@ -1,0 +1,8 @@
+id,5255239
+apiKey,sk-76ab82a038674cc0b74e739be49c77cc
+apiHost,llm-v2ktxo2j4qvb27qc.cn-beijing.maas.aliyuncs.com
+openAiCompatible,https://llm-v2ktxo2j4qvb27qc.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+dashScope,https://llm-v2ktxo2j4qvb27qc.cn-beijing.maas.aliyuncs.com/api/v1
+description,For OfferForge
+workspaceName,默认业务空间
+workspaceId,llm-v2ktxo2j4qvb27qc
