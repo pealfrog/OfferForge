@@ -698,17 +698,58 @@ button:hover:not(:disabled) {
 .composer-main {
   min-width: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
 }
 
+.composer-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  width: min(420px, 100%);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.composer-tab {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.composer-tab[aria-selected="true"] {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.composer-panels {
+  min-height: 0;
+}
+
+.composer-panel {
+  min-height: 126px;
+}
+
+.composer-panel[hidden] {
+  display: none;
+}
+
 .composer textarea {
-  min-height: 70px;
-  max-height: 180px;
+  min-height: 126px;
+  max-height: 126px;
+  resize: none;
 }
 
 .voice-panel {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 10px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -724,6 +765,7 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 42px;
 }
 
 .voice-button {
@@ -758,6 +800,26 @@ button:hover:not(:disabled) {
   animation: spin 780ms linear infinite;
 }
 
+.feedback-panel {
+  display: grid;
+}
+
+.feedback-empty {
+  min-height: 126px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.feedback-empty[hidden] {
+  display: none;
+}
+
 .voice-playback,
 .voice-feedback {
   display: grid;
@@ -775,7 +837,7 @@ button:hover:not(:disabled) {
 
 .voice-playback audio {
   width: 100%;
-  height: 38px;
+  height: 34px;
 }
 
 .voice-playback-label {
@@ -793,7 +855,7 @@ button:hover:not(:disabled) {
 }
 
 .voice-playback-hint {
-  color: var(--prep-strong);
+  color: var(--accent-strong);
 }
 
 .voice-summary {
@@ -811,6 +873,7 @@ button:hover:not(:disabled) {
 }
 
 .voice-debug {
+  display: none;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.76rem;
@@ -818,12 +881,19 @@ button:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.voice-latest {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .voice-feedback ul {
   margin: 0;
   padding-left: 18px;
   color: var(--muted);
   font-size: 0.84rem;
-  line-height: 1.55;
+  line-height: 1.45;
 }
 
 @media (max-width: 900px) {

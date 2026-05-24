@@ -92,20 +92,35 @@
 
             <form class="composer" id="chatForm">
               <div class="composer-main">
-                <textarea
-                  id="messageInput"
-                  rows="3"
-                  placeholder="输入你的回答或请求，例如：请先问我一个关于项目经历的问题。"
-                  autocomplete="off"
-                ></textarea>
-                <section class="voice-panel" id="voicePanel" aria-label="语音输入与表达分析">
-                  <div class="voice-actions">
-                    <button class="small-button voice-button" id="recordButton" type="button">开始录音</button>
-                    <span class="voice-status" id="voiceStatus">可录音输入，分析后会填入文本框。</span>
+                <div class="composer-tabs" role="tablist" aria-label="输入方式">
+                  <button class="composer-tab" data-composer-tab="text" type="button" aria-selected="true">文本回答</button>
+                  <button class="composer-tab" data-composer-tab="voice" type="button" aria-selected="false">语音录制</button>
+                  <button class="composer-tab" data-composer-tab="feedback" type="button" aria-selected="false">语言表达评价</button>
+                </div>
+
+                <div class="composer-panels">
+                  <section class="composer-panel" data-composer-panel="text">
+                    <textarea
+                      id="messageInput"
+                      rows="3"
+                      placeholder="输入你的回答。"
+                      autocomplete="off"
+                    ></textarea>
+                  </section>
+
+                  <section class="composer-panel voice-panel" id="voicePanel" data-composer-panel="voice" aria-label="语音输入">
+                    <div class="voice-actions">
+                      <button class="small-button voice-button" id="recordButton" type="button">开始录音</button>
+                      <span class="voice-status" id="voiceStatus">录音会写入文本回答，并累计语言表达评价。</span>
+                    </div>
+                    <div class="voice-playback" id="voicePlayback" hidden></div>
+                  </section>
+
+                  <div class="composer-panel feedback-panel" data-composer-panel="feedback">
+                    <div class="feedback-empty" id="feedbackEmpty">暂无语言表达评价</div>
+                    <div class="voice-feedback" id="voiceFeedback" hidden></div>
                   </div>
-                  <div class="voice-playback" id="voicePlayback" hidden></div>
-                  <div class="voice-feedback" id="voiceFeedback" hidden></div>
-                </section>
+                </div>
               </div>
               <button class="primary-button" id="sendButton" type="submit">发送</button>
             </form>

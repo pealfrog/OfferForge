@@ -28,6 +28,8 @@ const hideTimerButton = document.querySelector("#hideTimerButton");
 const showTimerButton = document.querySelector("#showTimerButton");
 const messagesEl = document.querySelector("#messages");
 const chatForm = document.querySelector("#chatForm");
+const composerTabs = Array.from(document.querySelectorAll("[data-composer-tab]"));
+const composerPanels = Array.from(document.querySelectorAll("[data-composer-panel]"));
 const messageInput = document.querySelector("#messageInput");
 const sendButton = document.querySelector("#sendButton");
 const voicePanel = document.querySelector("#voicePanel");
@@ -35,6 +37,7 @@ const recordButton = document.querySelector("#recordButton");
 const voiceStatus = document.querySelector("#voiceStatus");
 const voicePlayback = document.querySelector("#voicePlayback");
 const voiceFeedback = document.querySelector("#voiceFeedback");
+const feedbackEmpty = document.querySelector("#feedbackEmpty");
 
 const storageKey = "offerforge-chat-state";
 
@@ -42,7 +45,9 @@ let state = loadState();
 let isSending = false;
 let isFormattingResume = false;
 let isAnalyzingVoice = false;
+let activeComposerTab = "text";
 let voicePlaybackUrl = "";
+let voiceAnalyses = [];
 let recorder = {
   context: null,
   source: null,
@@ -227,6 +232,21 @@ function setVoiceStatus(text, busy = false) {
   recordButton.classList.toggle("is-recording", recorder.isRecording);
   recordButton.textContent = recorder.isRecording ? "停止并分析" : "开始录音";
   voicePanel.classList.toggle("is-busy", busy);
+}
+
+function setComposerTab(tabName) {
+  activeComposerTab = tabName;
+  composerTabs.forEach((tab) => {
+    const active = tab.dataset.composerTab === tabName;
+    tab.setAttribute("aria-selected", String(active));
+  });
+  composerPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.composerPanel !== tabName;
+  });
+
+  if (tabName === "text") {
+    messageInput.focus();
+  }
 }
 
 function formatMilliseconds(totalMs) {
@@ -715,16 +735,11 @@ function renderVoicePlayback(blob, { durationMs, peakLevel }) {
 
   const detail = document.createElement("p");
   detail.className = "voice-playback-detail";
-  detail.textContent = `时长 ${(durationMs / 1000).toFixed(1)}s · 大小 ${(blob.size / 1024).toFixed(
-    1,
-  )}KB · 本地峰值 ${Math.round(peakLevel * 100)}%`;
+  detail.textContent = `时长 ${(durationMs / 1000).toFixed(1)}s · 本地音量 ${Math.round(peakLevel * 100)}%`;
 
   const hint = document.createElement("p");
   hint.className = "voice-playback-hint";
-  hint.textContent =
-    peakLevel < 0.02
-      ? "回放如果几乎没有声音，优先检查浏览器麦克风权限、系统输入设备和音量。"
-      : "若回放正常但识别超时，问题更可能在豆包任务处理、公网音频访问或轮询时间。";
+  hint.textContent = peakLevel < 0.02 ? "声音偏小，建议检查麦克风输入。" : "可回放检查自己的语速、停顿和清晰度。";
 
   voicePlayback.replaceChildren(label, audio, detail, hint);
   voicePlayback.hidden = false;
@@ -748,41 +763,113 @@ function formatVoiceMetrics(metrics) {
   return parts.join(" · ");
 }
 
-function renderVoiceFeedback(data) {
+function averageVoiceMetric(key) {
+  const values = voiceAnalyses
+    .map((analysis) => Number(analysis.metrics?.[key]))
+    .filter((value) => Number.isFinite(value));
+
+  if (!values.length) {
+    return null;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function calculateVoiceScore() {
+  if (!voiceAnalyses.length) {
+    return 0;
+  }
+
+  const avgCharsPerMinute = averageVoiceMetric("charsPerMinute") || 0;
+  const avgLongPause = averageVoiceMetric("longPauseCount") || 0;
+  const avgDuration = averageVoiceMetric("durationSeconds") || 0;
+  let score = 82;
+
+  if (avgDuration < 20) {
+    score -= 12;
+  }
+
+  if (avgCharsPerMinute < 120) {
+    score -= 10;
+  } else if (avgCharsPerMinute > 260) {
+    score -= 8;
+  }
+
+  if (avgLongPause >= 2) {
+    score -= 8;
+  }
+
+  return Math.max(45, Math.min(95, Math.round(score)));
+}
+
+function buildOverallVoiceSuggestions({ avgCharsPerMinute, avgLongPause, avgDuration }) {
+  const suggestions = [];
+
+  if (avgDuration !== null && avgDuration < 20) {
+    suggestions.push("目前样本偏短，建议用 30 秒以上的完整回答做判断。");
+  }
+
+  if (avgCharsPerMinute !== null && avgCharsPerMinute > 260) {
+    suggestions.push("整体语速偏快，关键结论后可以停半拍。");
+  } else if (avgCharsPerMinute !== null && avgCharsPerMinute < 120) {
+    suggestions.push("整体语速偏慢，建议减少铺垫，先给结论再补依据。");
+  } else if (avgCharsPerMinute !== null) {
+    suggestions.push("整体语速处在较容易理解的区间。");
+  }
+
+  if (avgLongPause !== null && avgLongPause >= 2) {
+    suggestions.push("长停顿偏多，可以用分点表达降低临场组织压力。");
+  }
+
+  if (!suggestions.length) {
+    suggestions.push("继续积累更多语音回答后，评价会更稳定。");
+  }
+
+  return suggestions;
+}
+
+function renderVoiceFeedback() {
+  if (!voiceAnalyses.length) {
+    voiceFeedback.hidden = true;
+    feedbackEmpty.hidden = false;
+    return;
+  }
+
+  const avgCharsPerMinute = averageVoiceMetric("charsPerMinute");
+  const avgLongPause = averageVoiceMetric("longPauseCount");
+  const avgDuration = averageVoiceMetric("durationSeconds");
+  const latest = voiceAnalyses.at(-1);
+  const score = calculateVoiceScore();
+
   const summary = document.createElement("p");
   summary.className = "voice-summary";
-  summary.textContent = data.feedback?.summary || "语音分析完成。";
+  summary.textContent = `语言表达总体评分：${score} / 100`;
 
   const metrics = document.createElement("p");
   metrics.className = "voice-metrics";
-  metrics.textContent = formatVoiceMetrics(data.metrics || {});
+  metrics.textContent = [
+    `已记录 ${voiceAnalyses.length} 次`,
+    avgDuration === null ? "" : `平均时长 ${avgDuration.toFixed(1)}s`,
+    avgCharsPerMinute === null ? "" : `平均语速 ${Math.round(avgCharsPerMinute)} 字/分钟`,
+    avgLongPause === null ? "" : `平均长停顿 ${avgLongPause.toFixed(1)} 次`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const list = document.createElement("ul");
-  for (const suggestion of data.feedback?.suggestions || []) {
+  for (const suggestion of buildOverallVoiceSuggestions({ avgCharsPerMinute, avgLongPause, avgDuration })) {
     const item = document.createElement("li");
     item.textContent = suggestion;
     list.append(item);
   }
 
-  const children = [summary, metrics];
+  const latestNote = document.createElement("p");
+  latestNote.className = "voice-latest";
+  latestNote.textContent = `最近一次：${formatVoiceMetrics(latest.metrics || {})}`;
 
-  if (data.debug?.requestId || data.debug?.query?.logId || data.debug?.query?.statusCode) {
-    const debug = document.createElement("p");
-    debug.className = "voice-debug";
-    debug.textContent = [
-      data.debug?.requestId ? `requestId ${data.debug.requestId}` : "",
-      data.debug?.query?.statusCode ? `status ${data.debug.query.statusCode}` : "",
-      data.debug?.query?.message ? `message ${data.debug.query.message}` : "",
-      data.debug?.query?.logId ? `logid ${data.debug.query.logId}` : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    children.push(debug);
-  }
-
-  children.push(list);
-  voiceFeedback.replaceChildren(...children);
+  voiceFeedback.replaceChildren(summary, metrics, list, latestNote);
   voiceFeedback.hidden = false;
+  feedbackEmpty.hidden = true;
 }
 
 async function startRecording() {
@@ -802,7 +889,6 @@ async function startRecording() {
     return;
   }
 
-  voiceFeedback.hidden = true;
   voicePlayback.hidden = true;
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -890,11 +976,11 @@ async function stopRecordingAndAnalyze() {
 
   if (data.text) {
     messageInput.value = data.text;
-    messageInput.focus();
   }
 
-  renderVoiceFeedback(data);
-  setVoiceStatus(data.text ? "已转写到输入框，可修改后发送。" : "已完成分析，但没有识别到文本。");
+  voiceAnalyses.push({ metrics: data.metrics || {}, feedback: data.feedback || {}, text: data.text || "" });
+  renderVoiceFeedback();
+  setVoiceStatus(data.text ? "已转写到文本回答，可修改后发送。" : "已完成分析，但没有识别到文本。");
 }
 
 hideTimerButton.addEventListener("click", () => {
@@ -905,6 +991,12 @@ hideTimerButton.addEventListener("click", () => {
 showTimerButton.addEventListener("click", () => {
   state.timerVisible = true;
   render();
+});
+
+composerTabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    setComposerTab(tab.dataset.composerTab);
+  });
 });
 
 recordButton.addEventListener("click", async () => {
@@ -1047,6 +1139,7 @@ async function requestResumeQuestion({ append = false, advanceToNext = false } =
 }
 
 render();
+setComposerTab(activeComposerTab);
 if (state.trainingMode === "resume") {
   if (state.resumeSections.length && !state.messages.length) {
     requestResumeQuestion();
