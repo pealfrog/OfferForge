@@ -141,7 +141,7 @@ function buildSystemPrompt({ trainingMode, context, resume, followup }) {
   const canFollowUp = followupCount < maxFollowups;
   const prompt = [
     "你是 OfferForge 的 AI 模拟面试官，目标用户是大三本科生，方向偏计算机/AI。",
-    `训练模式：${trainingMode === "resume" ? "针对简历提问追问" : trainingMode === "project" ? "针对应聘项目个性化训练" : "通用类问题问答"}`,
+    `训练模式：${trainingMode === "resume" ? "针对简历提问追问" : "通用类问题问答"}`,
     `基础用户信息：${context || "大三本科生，计算机/AI 方向。"}`,
     `当前连续追问次数：${followupCount}，追问上限：${maxFollowups}。`,
     canFollowUp
@@ -332,8 +332,6 @@ async function handleOpeningQuestion(request, response) {
       reply = pickRandom(questions) || "请简单做一个自我介绍。";
     } else if (trainingMode === "resume") {
       reply = "请先上传简历，我会直接从简历内容开始追问。";
-    } else if (trainingMode === "project") {
-      reply = "请先介绍一个你最想被追问的项目：项目目标、你的角色、技术栈和结果。";
     } else {
       reply = pickRandom(questions) || "请简单做一个自我介绍。";
     }
@@ -854,8 +852,9 @@ async function handleFormatResume(request, response) {
             "请只做格式恢复、分段、标题识别和轻微标点修复，不要新增、删除或修改任何原本简历中的内容",
             "输出纯文本，不要 Markdown 表格，不要解释。",
             "分段目标是支持后续面试追问：每个段落应尽量对应一个可独立追问的简历点。",
-            "粗粒度处理：基本信息、教育背景和课程、技能证书、荣誉称号等信息可合并成较少段落",
+            "粗粒度处理：基本信息、教育背景和课程等信息可合并成较少段落",
             "细粒度处理：科研经历、实习经历、发表论文等重点考察内容可以按照不同项目、不同工作拆分为不同段落",
+            "特别注意，在不同的地方的工作经历、在不同时期的项目经历、不同的论文也请分开写，因为都可以分别具体展开问",
             "段落之间用一个空行分隔；段落标题单独成行。",
             "如果段落内部需要使用 - 列表，列表项仍属于该段落；不要在列表项之间插入空行。",
             "如果某些信息无法判断归类，就保留在最接近的段落中；宁可保守分段，不要编造缺失字段。",

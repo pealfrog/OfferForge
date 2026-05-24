@@ -95,9 +95,11 @@ function loadState() {
 
   try {
     const parsed = JSON.parse(saved);
+    const trainingMode = ["general", "resume"].includes(parsed.trainingMode) ? parsed.trainingMode : "general";
     return {
       ...baseState,
       ...parsed,
+      trainingMode,
       messages: Array.isArray(parsed.messages) ? parsed.messages : [],
     };
   } catch {
@@ -353,10 +355,7 @@ function startTimer(timerName) {
 function buildPayload() {
   return {
     trainingMode: state.trainingMode,
-    context:
-      state.trainingMode === "project"
-        ? "大三本科生，计算机/AI 方向，正在准备应聘项目训练。"
-        : "大三本科生，计算机/AI 方向。",
+    context: "大三本科生，计算机/AI 方向。",
     followup: {
       mode: state.followupMode,
       count: state.followupCount,
